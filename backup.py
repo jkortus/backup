@@ -1,6 +1,8 @@
 import os
 
 import base64
+from pathlib import Path
+import logging
 
 # https://cryptography.io/en/latest/hazmat/primitives/key-derivation-functions/#scrypt
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
@@ -12,9 +14,14 @@ SCRYPT_N = 2**14
 BUFFER_SIZE_BYTES = 32 * 1024 * 1024
 IV_SIZE_BYTES = 12
 TAG_SIZE_BYTES = 16
+SALT_SIZE_BYTES = 16
 
+logging.basicConfig(level=logging.DEBUG)
+log = logging.getLogger(__name__)
 
+_KEYSTORE={} # cached keys for detected salts
 class FileEncryptor:
+    #TODO: save salt in the file
     def __init__(self, path, key):
         self.key = key
         self.iv = os.urandom(IV_SIZE_BYTES)
@@ -53,8 +60,16 @@ class FileEncryptor:
             self._fd.close()
             self._fd = None
 
+    def encrypt_to_file(self, destination):
+        with open(destination, "wb") as f:
+            while True:
+                data = self.read(BUFFER_SIZE_BYTES)
+                if not data:
+                    break
+                f.write(data)
 
 class FileDecryptor:
+    #TODO: detect salt from file
     def __init__(self, path, key):
         self.key = key
         self.path = path
@@ -91,8 +106,9 @@ class FileDecryptor:
         return self.decryptor.update(encrypted_data)
 
 
-def generate_key(password):
-    salt = os.urandom(16)
+def generate_key(password, salt=None):
+    if salt is None:
+        salt = os.urandom(SALT_SIZE_BYTES)
     kdf = Scrypt(
         salt=salt,
         length=32,
@@ -112,7 +128,7 @@ def generate_key(password):
     )
     kdf.verify(password.encode("utf-8"), key)
 
-    return key
+    return (key, salt)
 
 
 def get_encryptor(key):
@@ -180,35 +196,32 @@ def _decrypt(key, iv, ciphertext, tag):
 
 #
 print("Generating key")
-key = generate_key("password")
-iv, encryptor = get_encryptor(key)
+key, salt = generate_key("password")
+#iv, encryptor = get_encryptor(key)
 input_file = "./data"
 encrypted_file = "./data.enc"
 
 
-def encrypt_file(input_file, encrypted_file):
-    with open(input_file, "rb") as f:
-        with open(encrypted_file, "wb") as ef:
-            data = f.read(BUFFER_SIZE_BYTES)
-            while data:
-                ef.write(encryptor.update(data))
-                data = f.read(BUFFER_SIZE_BYTES)
-            ef.write(encryptor.finalize())
-            ef.write(encryptor.tag)
-            print(f"tag size: {len(encryptor.tag)}")
-            ef.write(iv)
-
-
 def encrypt_filename(key, plaintext):
     iv, ciphertext, tag = _encrypt(key, plaintext.encode("utf-8"))
-    return base64.b64encode(iv + tag + ciphertext)
+    result = base64.urlsafe_b64encode(iv + tag + salt +ciphertext)
+    #log.debug(f"Encryped: {ciphertext} iv={iv} tag={tag}")
+    return result
 
 
 def decrypt_filename(key, encrypted_filename):
-    decoded = base64.b64decode(encrypted_filename)
+    decoded = base64.urlsafe_b64decode(encrypted_filename)
     iv = decoded[:IV_SIZE_BYTES]
     tag = decoded[IV_SIZE_BYTES : IV_SIZE_BYTES + TAG_SIZE_BYTES]
-    ciphertext = decoded[IV_SIZE_BYTES + TAG_SIZE_BYTES :]
+    salt = decoded[IV_SIZE_BYTES + TAG_SIZE_BYTES : IV_SIZE_BYTES + TAG_SIZE_BYTES + SALT_SIZE_BYTES]
+    try:
+        key = _KEYSTORE[salt]
+    except KeyError:
+        log.debug(f"Generating decryption key for salt {salt}")
+        key, _ = generate_key("password", salt)
+        _KEYSTORE[salt] = key
+    ciphertext = decoded[IV_SIZE_BYTES + TAG_SIZE_BYTES + SALT_SIZE_BYTES :]
+    #log.debug(f"Decryped: {ciphertext} iv={iv} tag={tag}")
     return _decrypt(key, iv, ciphertext, tag).decode("utf-8")
 
 
@@ -238,30 +251,66 @@ def decrypt_file(encrypted_file, destination):
                     f.write(decryptor.finalize())
                     break
 
+def test():
+    encrypted_filename = encrypt_filename(key, input_file * 8)
+    print("Encrypted filename: %s" % encrypted_filename)
+    print("Decrypted filename: %s" % decrypt_filename(key, encrypted_filename))
+    print("Encrypting file")
+    file_encryptor = FileEncryptor(input_file, key)
+    with open(encrypted_file, "wb") as ef:
+        data = file_encryptor.read()
+        ef.write(data)
 
-encrypted_filename = encrypt_filename(key, input_file * 8)
-print("Encrypted filename: %s" % encrypted_filename)
-print("Decrypted filename: %s" % decrypt_filename(key, encrypted_filename))
-print("Encrypting file")
-file_encryptor = FileEncryptor(input_file, key)
-with open(encrypted_file, "wb") as ef:
-    data = file_encryptor.read()
-    ef.write(data)
+    print("Decrypting file")
+    file_decryptor = FileDecryptor(encrypted_file, key)
+    with open("./data.dec", "wb") as f:
+        data = file_decryptor.read()
+        f.write(data)
 
-print("Decrypting file")
-file_decryptor = FileDecryptor(encrypted_file, key)
-with open("./data.dec", "wb") as f:
-    data = file_decryptor.read()
-    f.write(data)
+def encrypt(directory, destination):
+    # todo: make sure destination is empty
+    for root, dirs, files in os.walk(directory):
+        for f in files:
+            encrypted_filename = encrypt_filename(key, f).decode("utf-8")
+            log.debug(f"Encrypting file {f} -> {encrypted_filename}")
+            file_encryptor = FileEncryptor(os.path.join(root, f), key)
+            file_encryptor.encrypt_to_file(os.path.join(destination, encrypted_filename))
+            
+        # for d in dirs:
+        #     encrypted_dir = encrypt_filename(key, d).decode("utf-8")
+        #     log.debug(f"Encrypting directory {d} -> {encrypted_dir}")
+        #     os.mkdir(os.path.join(destination, encrypted_dir))
 
-# encrypt_file(input_file, encrypted_file)
-# print("Decrypting file")
-# decrypt_file(encrypted_file, "./data.dec")
+def list_encrypted_dir(encrypted_dir):
+    for root, dirs, files in os.walk(encrypted_dir):
+        for f in files:
+            try:
+                print(f"File: {decrypt_filename(key, f)} - {f}")
+            except Exception as e:
+                print(f"Error while decrypting {f}: {e.__class__} {e}")
+                
+        for d in dirs:
+            print(f"Directory: {d}")            
+            
 
 
-# iv, ciphertext, tag = encrypt(
-#     key, b"a secret message!"
-# )
-# print(f"iv: {iv}, ciphertext: {ciphertext}, tag: {tag}")
+EDIR = "./plain"
+CDIR = "./encrypted"
+encrypt(EDIR, CDIR)
+list_encrypted_dir(CDIR)
 
-# print(decrypt(key, iv, ciphertext, tag))
+x = encrypt_filename(key, "test")
+print(x)
+#with open('/tmp/test', 'wb') as f:
+#    f.write(x)
+
+with open('/tmp/test', 'rb') as f:
+    y = f.read()
+   
+try:
+    print(decrypt_filename(key, y))
+except Exception as e:
+    print(f"Error while decrypting {y}: {e.__class__} {e}")
+
+# DEBUG:__main__:Decryped: b'8\xeb\xbe\x83' iv=b'\r\x865x*\xe6T\xbf\xad\x9a`\xc5' tag=b'\xe98:\xf4no\xe0\x06/L\xb2z\xe3\xcc\x82\xa9'
+# DEBUG:__main__:Decryped: b'8\xeb\xbe\x83' iv=b'\r\x865x*\xe6T\xbf\xad\x9a`\xc5' tag=b'\xe98:\xf4no\xe0\x06/L\xb2z\xe3\xcc\x82\xa9'
