@@ -12,14 +12,26 @@ from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 # https://cryptography.io/en/latest/hazmat/primitives/symmetric-encryption/#cryptography.hazmat.primitives.ciphers.modes.GCM
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
+logging.basicConfig(level=logging.DEBUG)
+log = logging.getLogger(__name__)
+
+
 SCRYPT_N = 2**14
 BUFFER_SIZE_BYTES = 32 * 1024 * 1024
 IV_SIZE_BYTES = 12
 TAG_SIZE_BYTES = 16
 SALT_SIZE_BYTES = 16
 
-logging.basicConfig(level=logging.DEBUG)
-log = logging.getLogger(__name__)
+# file system limits
+MAX_FILENAME_LENGTH = 255
+MAX_PATH_LENGTH = 4096
+BASE64_OVERHEAD = 1.4  # 40% overhead
+MAX_UNENCRYPTED_FILENAME_LENGTH = int(
+    (MAX_FILENAME_LENGTH - IV_SIZE_BYTES - TAG_SIZE_BYTES - SALT_SIZE_BYTES)
+    / BASE64_OVERHEAD
+)
+log.debug(f"Max unencrypted filename length: {MAX_UNENCRYPTED_FILENAME_LENGTH}")
+
 
 _KEYSTORE = {}  # cached keys for detected salts
 
@@ -232,6 +244,10 @@ def _decrypt(key: EncryptionKey, iv: bytes, ciphertext: bytes, tag: bytes):
 def encrypt_filename(key: EncryptionKey, plaintext: str) -> bytes:
     """Encrypts a filename with the given key and returns a base64 encoded string"""
     # pylint: disable=invalid-name
+    if len(plaintext) > MAX_UNENCRYPTED_FILENAME_LENGTH:
+        raise ValueError(
+            f"Filename {plaintext} is too long. Max length is {MAX_UNENCRYPTED_FILENAME_LENGTH}"
+        )
     iv, ciphertext, tag = _encrypt(key, plaintext.encode("utf-8"))
     result = base64.urlsafe_b64encode(iv + tag + key.salt + ciphertext)
     return result
@@ -244,7 +260,9 @@ def decrypt_filename(encrypted_filename: bytes, password=None) -> str:
         raise NotImplementedError("Password must be provided")
     decoded = base64.urlsafe_b64decode(encrypted_filename)
     if len(decoded) < IV_SIZE_BYTES + TAG_SIZE_BYTES + SALT_SIZE_BYTES:
-        raise ValueError("Invalid encrypted filename. Too short to get all required metadata.")
+        raise ValueError(
+            "Invalid encrypted filename. Too short to get all required metadata."
+        )
     iv = decoded[:IV_SIZE_BYTES]
     tag = decoded[IV_SIZE_BYTES : IV_SIZE_BYTES + TAG_SIZE_BYTES]
     salt = decoded[
@@ -264,20 +282,72 @@ def decrypt_filename(encrypted_filename: bytes, password=None) -> str:
     return _decrypt(key, iv, ciphertext, tag).decode("utf-8")
 
 
-def encrypt_directory(key: EncryptionKey, directory, destination):
-    """encrypts all files and directories in directory and writes them to destination"""
-    # todo: make sure destination is empty
-
+def list_encrypted_directory(directory, password=None):
+    """
+    returns a tuple of
+        (
+            {'decrypted_dir_name': 'encrypted_dir_name,...},
+            {'decrypted_file_name': 'encrypted_file_name,...},
+    """
+    # TODO: ask for password interactively if not provided
+    if password is None:
+        raise NotImplementedError("Password must be provided")
+    encrypted_dirs = {}
+    encrypted_files = {}
     for root, dirs, files in os.walk(directory):
+        for dname in dirs:
+            decrypted_name = decrypt_filename(dname, password=password)
+            if decrypted_name in encrypted_dirs:
+                log.error(f"Duplicate directory name {decrypted_name} -> {dname} in {root}. Probably identical file encrypted with multiple keys.")
+            encrypted_dirs[decrypted_name] = dname
         for fname in files:
-            encrypted_filename = encrypt_filename(key, fname).decode("utf-8")
-            log.debug(f"Encrypting file {fname} -> {encrypted_filename}")
-            file_encryptor = FileEncryptor(os.path.join(root, fname), key)
-            file_encryptor.encrypt_to_file(
-                os.path.join(destination, encrypted_filename)
-            )
+            decrypted_name = decrypt_filename(fname, password=password)
+            if decrypted_name in encrypted_files:
+                log.error(f"Duplicate file name {decrypted_name} -> {fname} in {root}. Probably identical file encrypted with multiple keys.")
+            encrypted_files[decrypted_name] = fname
+        break  # fist level only
+    return (encrypted_dirs, encrypted_files)
 
-        # for d in dirs:
-        #     encrypted_dir = encrypt_filename(key, d).decode("utf-8")
-        #     log.debug(f"Encrypting directory {d} -> {encrypted_dir}")
-        #     os.mkdir(os.path.join(destination, encrypted_dir))
+
+def encrypt_directory(key: EncryptionKey, directory, destination, password):
+    """encrypts all files and directories in directory and writes them to destination"""
+    os.makedirs(destination, exist_ok=True)
+    for root, dirs, files in os.walk(directory):
+        #TODO: check if adding a new encrypted fname/dname would be beyond the MAX_PATH_LENGTH
+        existing_dirs, existing_files = list_encrypted_directory(
+            destination, password=password
+        )
+        print(existing_dirs, existing_files)
+        for fname in files:
+            if fname in existing_files:
+                log.debug(
+                    f"Skipping already encrypted file {fname} -> {existing_files[fname]}"
+                )
+                continue
+            encrypted_filename = encrypt_filename(key, fname).decode("utf-8")
+            abs_fname = os.path.join(root, fname)
+            abs_enc_fname = os.path.join(destination, encrypted_filename)
+            log.debug(f"Encrypting file {fname} -> {encrypted_filename}")
+            file_encryptor = FileEncryptor(abs_fname, key)
+            file_encryptor.encrypt_to_file(os.path.join(destination, abs_enc_fname))
+            file_encryptor.close()
+        for dname in dirs:
+            if dname in existing_dirs:
+                log.debug(
+                    f"Skipping already encrypted directory {dname} -> {existing_dirs[dname]}"
+                )
+                continue
+            encrypted_dirname = encrypt_filename(key, dname).decode("utf-8")
+            abs_dname = os.path.join(root, dname)
+            abs_enc_dname = os.path.join(destination, encrypted_dirname)
+            log.debug(f"Encrypting directory {dname} -> {encrypted_dirname}")
+            os.mkdir(abs_enc_dname)
+            encrypt_directory(key, abs_dname, abs_enc_dname, password=password)
+        # TODO: recurse into deeper subdirs in next iteratons of this loop
+
+
+if __name__ == "__main__":
+    key = EncryptionKey(password="test")
+    encrypt_directory(
+        key, "/tmp/backup_test/source", "/tmp/backup_test/destination", password="test"
+    )
