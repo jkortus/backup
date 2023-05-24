@@ -122,6 +122,7 @@ class FileEncryptor:
         encrypts the underlying file and writes it to destination
         using incremental reads
         """
+        # TODO: add overwrite protection
         with open(destination, "wb") as f:
             while True:
                 data = self.read(BUFFER_SIZE_BYTES)
@@ -199,6 +200,19 @@ class FileDecryptor:
             decrypted_data += self.decryptor.finalize()
         return decrypted_data
 
+    def decrypt_to_file(self, destination):
+        """
+        decrypts the underlying file and writes it to destination
+        using incremental reads
+        """
+        # TODO add overwrite switch
+        with open(destination, "wb") as f:
+            while True:
+                data = self.read(BUFFER_SIZE_BYTES)
+                if not data:
+                    break
+                f.write(data)
+
     def close(self):
         """closes the underlying file if open"""
         if self._fd:
@@ -246,7 +260,7 @@ def encrypt_filename(key: EncryptionKey, plaintext: str) -> bytes:
     # pylint: disable=invalid-name
     if len(plaintext) > MAX_UNENCRYPTED_FILENAME_LENGTH:
         raise ValueError(
-            f"Filename {plaintext} is too long. Max length is {MAX_UNENCRYPTED_FILENAME_LENGTH}"
+            f"Filename {plaintext} is too long ({len(plaintext)}). Max length is {MAX_UNENCRYPTED_FILENAME_LENGTH}."
         )
     iv, ciphertext, tag = _encrypt(key, plaintext.encode("utf-8"))
     result = base64.urlsafe_b64encode(iv + tag + key.salt + ciphertext)
@@ -274,7 +288,9 @@ def decrypt_filename(encrypted_filename: bytes, password=None) -> str:
     try:
         key = _KEYSTORE[salt]
     except KeyError:
-        log.debug(f"Generating decryption key for salt {salt}")
+        log.debug(
+            f"Generating decryption key for salt {salt}, triggered by {encrypted_filename}"
+        )
         # TODO: ask for password interactively if not provided
         key = EncryptionKey(password=password, salt=salt)
         _KEYSTORE[salt] = key
@@ -298,26 +314,38 @@ def list_encrypted_directory(directory, password=None):
         for dname in dirs:
             decrypted_name = decrypt_filename(dname, password=password)
             if decrypted_name in encrypted_dirs:
-                log.error(f"Duplicate directory name {decrypted_name} -> {dname} in {root}. Probably identical file encrypted with multiple keys.")
+                log.error(
+                    f"Duplicate directory name {decrypted_name} -> {dname} in {root}. Probably identical file encrypted with multiple keys."
+                )
             encrypted_dirs[decrypted_name] = dname
         for fname in files:
             decrypted_name = decrypt_filename(fname, password=password)
             if decrypted_name in encrypted_files:
-                log.error(f"Duplicate file name {decrypted_name} -> {fname} in {root}. Probably identical file encrypted with multiple keys.")
+                log.error(
+                    f"Duplicate file name {decrypted_name} -> {fname} in {root}. Probably identical file encrypted with multiple keys."
+                )
             encrypted_files[decrypted_name] = fname
         break  # fist level only
     return (encrypted_dirs, encrypted_files)
 
 
-def encrypt_directory(key: EncryptionKey, directory, destination, password):
+def encrypt_directory(source, destination, password):
     """encrypts all files and directories in directory and writes them to destination"""
+    log.debug(f"encrypt_directory({source} -> {destination})")
     os.makedirs(destination, exist_ok=True)
-    for root, dirs, files in os.walk(directory):
-        #TODO: check if adding a new encrypted fname/dname would be beyond the MAX_PATH_LENGTH
+    key = EncryptionKey(password=password)
+    if not os.path.isdir(source):
+        raise ValueError(f"Directory {source} does not exist or is not a directory")
+    for root, dirs, files in os.walk(source):
+        # TODO: check if adding a new encrypted fname/dname would be beyond the MAX_PATH_LENGTH
         existing_dirs, existing_files = list_encrypted_directory(
             destination, password=password
         )
-        print(existing_dirs, existing_files)
+        log.debug(f"Source dirs in [{source}]: {dirs} Source files: {files}")
+        log.debug(
+            f"Existing encrypted dirs in [{destination}]: {existing_dirs} Existing files: {existing_files}"
+        )
+
         for fname in files:
             if fname in existing_files:
                 log.debug(
@@ -332,22 +360,71 @@ def encrypt_directory(key: EncryptionKey, directory, destination, password):
             file_encryptor.encrypt_to_file(os.path.join(destination, abs_enc_fname))
             file_encryptor.close()
         for dname in dirs:
+            abs_dname = os.path.join(root, dname)
             if dname in existing_dirs:
                 log.debug(
                     f"Skipping already encrypted directory {dname} -> {existing_dirs[dname]}"
                 )
+                abs_enc_dname = os.path.join(destination, existing_dirs[dname])
+            else:
+                encrypted_dirname = encrypt_filename(key, dname).decode("utf-8")
+                abs_enc_dname = os.path.join(destination, encrypted_dirname)
+                log.debug(f"Encrypting directory {dname} -> {encrypted_dirname}")
+                os.mkdir(abs_enc_dname)
+            encrypt_directory(
+                source=abs_dname, destination=abs_enc_dname, password=password
+            )
+        break  # one level in each call, the rest gets handled in the recurisve calls
+
+
+def decrypt_directory(source, destination, password):
+    """decrypts all files and directories in directory and writes them to destination"""
+    log.debug(f"decrypt_directory({source} -> {destination})")
+    os.makedirs(destination, exist_ok=True)
+
+    if not os.path.isdir(source):
+        raise ValueError(f"Directory {source} does not exist or is not a directory")
+    for root, dirs, files in os.walk(source):
+        _, existing_dirs, existing_files = next(os.walk(destination))
+        log.debug(f"Source dirs in [{source}]: {dirs} Source files: {files}")
+        log.debug(
+            f"Existing decrypted dirs in [{destination}]: {existing_dirs} Existing files: {existing_files}"
+        )
+        for fname in files:
+            decrypted_filename = decrypt_filename(fname, password=password)
+            if decrypted_filename in existing_files:
+                log.debug(
+                    f"Skipping already decrypted file {fname} -> {decrypted_filename}"
+                )
                 continue
-            encrypted_dirname = encrypt_filename(key, dname).decode("utf-8")
+            abs_fname = os.path.join(root, fname)
+            abs_dec_fname = os.path.join(destination, decrypted_filename)
+            log.debug(f"Decrypting file {fname} -> {decrypted_filename}")
+            file_decryptor = FileDecryptor(abs_fname, password=password)
+            file_decryptor.decrypt_to_file(os.path.join(destination, abs_dec_fname))
+            file_decryptor.close()
+        for dname in dirs:
             abs_dname = os.path.join(root, dname)
-            abs_enc_dname = os.path.join(destination, encrypted_dirname)
-            log.debug(f"Encrypting directory {dname} -> {encrypted_dirname}")
-            os.mkdir(abs_enc_dname)
-            encrypt_directory(key, abs_dname, abs_enc_dname, password=password)
-        # TODO: recurse into deeper subdirs in next iteratons of this loop
+            decrypted_dirname = decrypt_filename(dname, password=password)
+            if decrypted_dirname in existing_dirs:
+                log.debug(
+                    f"Skipping already decrypted directory {dname} -> {decrypted_dirname}"
+                )
+                abs_dec_dname = os.path.join(destination, decrypted_dirname)
+            else:
+                abs_dec_dname = os.path.join(destination, decrypted_dirname)
+                log.debug(f"Decrypting directory {dname} -> {decrypted_dirname}")
+                os.mkdir(abs_dec_dname)
+            decrypt_directory(
+                source=abs_dname, destination=abs_dec_dname, password=password
+            )
+        break  # one level in each call, the rest gets handled in the recurisve calls
 
 
 if __name__ == "__main__":
-    key = EncryptionKey(password="test")
     encrypt_directory(
-        key, "/tmp/backup_test/source", "/tmp/backup_test/destination", password="test"
+        "/tmp/backup_test/source", "/tmp/backup_test/destination", password="test"
+    )
+    decrypt_directory(
+        "/tmp/backup_test/destination", "/tmp/backup_test/decrypted", password="test"
     )
