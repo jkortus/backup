@@ -9,7 +9,7 @@ import shutil
 import logging
 import pathlib
 
-backup.log.setLevel(backup.logging.ERROR)
+backup.log.setLevel(backup.logging.WARNING)
 
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger(__name__)
@@ -212,50 +212,7 @@ class FileEncryptorTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             backup.encrypt_filename(key, filename)
 
-    def test_structures_larger_than_max_path_limits(self):
-        source_dir = tempfile.mkdtemp(dir=self.test_dir, prefix="source-")
-        dest_dir = tempfile.mkdtemp(dir=self.test_dir, prefix="encrypted-")
-        dec_dir = tempfile.mkdtemp(dir=self.test_dir, prefix="decrypted-")
-        current_path_length = len(source_dir)
-        dir_name_size = backup.MAX_UNENCRYPTED_FILENAME_LENGTH # length of directory name
-        # long enough but not too much for os.makedirs
-        depth = int((backup.MAX_PATH_LENGTH - current_path_length) / dir_name_size) -1
-        dirtree = "/".join([ str(_)+"x"*(dir_name_size - len(str(_))) for  _ in range(depth)])
-        last_dir = os.path.join(source_dir, dirtree)
-        os.makedirs(last_dir)
-        filename = "f" * backup.MAX_UNENCRYPTED_FILENAME_LENGTH
-        os.chdir(last_dir)
-        os.makedirs(dirtree) # double the "long enough", so it's definitely too much :)
-        os.chdir(dirtree)
-        log.debug(f"Current dir length: {len(os.getcwd())}")
-        with open(filename, "wb") as tfd:
-            tfd.write(b"test")
-        abs_filename = os.path.join(os.getcwd(), filename)
-        log.debug(f"Abs path length of test filename: {len(abs_filename)}")
-        backup.encrypt_directory(source_dir, dest_dir, password=self.password)
-        backup.decrypt_directory(dest_dir, dec_dir, password=self.password)
 
-        source_walker = os.walk(source_dir)
-        decrypted_walker = os.walk(dec_dir)
-        while True:
-            try:
-                source_root, source_dirs, source_files = next(source_walker)
-                decrypted_root, decrypted_dirs, decrypted_files = next(decrypted_walker)
-            except StopIteration:
-                break
-            self.assertEqual(len(source_files), len(decrypted_files), "Number of files in source and decrypted directory does not match")
-            self.assertEqual(len(source_dirs), len(decrypted_dirs), "Number of directories in source and decrypted directory does not match")
-            for source_file, decrypted_file in zip(source_files, decrypted_files):
-                with open(os.path.join(source_root, source_file), "rb") as tfd:
-                    source_data = tfd.read()
-                with open(os.path.join(decrypted_root, decrypted_file), "rb") as tfd:
-                    decrypted_data = tfd.read()
-                self.assertEqual(
-                    source_data, decrypted_data, "Decrypted data does not match source"
-                )
-        enc = backup.FileEncryptor(path=abs_filename, key=EncryptionKey(password=self.password))
-        enc.read()
-        enc.close()
 
 
 
@@ -383,6 +340,47 @@ class DirectoryEncryptionTest(unittest.TestCase):
                 break
             self.assertEqual(len(source_files), len(decrypted_files))
             self.assertEqual(len(source_dirs), len(decrypted_dirs))
+            for source_file, decrypted_file in zip(source_files, decrypted_files):
+                with open(os.path.join(source_root, source_file), "rb") as tfd:
+                    source_data = tfd.read()
+                with open(os.path.join(decrypted_root, decrypted_file), "rb") as tfd:
+                    decrypted_data = tfd.read()
+                self.assertEqual(
+                    source_data, decrypted_data, "Decrypted data does not match source"
+                )
+    def test_structures_larger_than_max_path_limits(self):
+        source_dir = tempfile.mkdtemp(dir=self.root, prefix="source-")
+        dest_dir = tempfile.mkdtemp(dir=self.root, prefix="encrypted-")
+        dec_dir = tempfile.mkdtemp(dir=self.root, prefix="decrypted-")
+        current_path_length = len(source_dir)
+        dir_name_size = backup.MAX_UNENCRYPTED_FILENAME_LENGTH # length of directory name
+        # long enough but not too much for os.makedirs
+        depth = int((backup.MAX_PATH_LENGTH - current_path_length) / dir_name_size) -1
+        dirtree = "/".join([ str(_)+"x"*(dir_name_size - len(str(_))) for  _ in range(depth)])
+        last_dir = os.path.join(source_dir, dirtree)
+        os.makedirs(last_dir)
+        filename = "f" * backup.MAX_UNENCRYPTED_FILENAME_LENGTH
+        os.chdir(last_dir)
+        os.makedirs(dirtree) # double the "long enough", so it's definitely too much :)
+        os.chdir(dirtree)
+        log.debug(f"Current dir length: {len(os.getcwd())}")
+        with open(filename, "wb") as tfd:
+            tfd.write(b"test")
+        abs_filename = os.path.join(os.getcwd(), filename)
+        log.debug(f"Abs path length of test filename: {len(abs_filename)}")
+        backup.encrypt_directory(source_dir, dest_dir, password=self.password)
+        backup.decrypt_directory(dest_dir, dec_dir, password=self.password)
+
+        source_walker = os.walk(source_dir)
+        decrypted_walker = os.walk(dec_dir)
+        while True:
+            try:
+                source_root, source_dirs, source_files = next(source_walker)
+                decrypted_root, decrypted_dirs, decrypted_files = next(decrypted_walker)
+            except StopIteration:
+                break
+            self.assertEqual(len(source_files), len(decrypted_files), "Number of files in source and decrypted directory does not match")
+            self.assertEqual(len(source_dirs), len(decrypted_dirs), "Number of directories in source and decrypted directory does not match")
             for source_file, decrypted_file in zip(source_files, decrypted_files):
                 with open(os.path.join(source_root, source_file), "rb") as tfd:
                     source_data = tfd.read()

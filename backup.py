@@ -491,7 +491,12 @@ def safe_cwd_cm(directory: str):
     changes to a directory that is over MAX_PATH_LENGTH
     and then back
     """
-    old_cwd = os.getcwd()
+    try:
+        old_cwd = os.getcwd()
+    except FileNotFoundError:
+        # sometimes we are in a directory that no longer exists ;)
+        log.warning("Current working directory no longer exists, will return to /")
+        old_cwd = "/"
     try:
         safe_cwd(directory)
         yield
