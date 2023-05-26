@@ -3,6 +3,8 @@ import os
 
 import base64
 import logging
+from contextlib import contextmanager
+import pathlib
 
 # pylint: disable=logging-fstring-interpolation
 
@@ -25,7 +27,7 @@ SALT_SIZE_BYTES = 16
 # file system limits
 MAX_FILENAME_LENGTH = 255
 MAX_PATH_LENGTH = 4096
-BASE64_OVERHEAD = 1.4  # 40% overhead
+BASE64_OVERHEAD = 1.5  # 50% overhead, 40 was too low
 MAX_UNENCRYPTED_FILENAME_LENGTH = int(
     (MAX_FILENAME_LENGTH - IV_SIZE_BYTES - TAG_SIZE_BYTES - SALT_SIZE_BYTES)
     / BASE64_OVERHEAD
@@ -67,10 +69,24 @@ class EncryptionKey:
         kdf.verify(password.encode("utf-8"), self.key)
 
 
+def get_safe_path_segments(path: str) -> list[str]:
+    """splits path into segments that are below MAX_PATH_LENGTH"""
+    path_segments = list(pathlib.Path(path).parts)
+    safe_path_segments = []
+    current_segment = ""
+    for segment in path_segments:
+        if (len(current_segment) + len(segment) + len("/")) > MAX_PATH_LENGTH:
+            safe_path_segments.append(current_segment)
+            current_segment = segment
+        else:
+            current_segment = os.path.join(current_segment, segment)
+    safe_path_segments.append(current_segment)
+    return safe_path_segments
+
+
 class FileEncryptor:
     """File wrapper that encrypts the content of the file on the fly"""
 
-    # TODO: save salt in the file
     # pylint: disable=invalid-name
     def __init__(self, path: str, key: EncryptionKey):
         self.key = key
@@ -91,7 +107,19 @@ class FileEncryptor:
         if size is not None:
             args.append(size)
         if not self._fd:
-            self._fd = open(self.path, "rb")
+            if len(self.path) > MAX_PATH_LENGTH:
+                dirpath = os.path.dirname(self.path)
+                filename = os.path.basename(self.path)
+                safe_path_segments = get_safe_path_segments(dirpath)
+                old_cwd = os.getcwd()
+                for segment in safe_path_segments:
+                    os.chdir(segment)
+                self._fd = open(filename, "rb")
+                for segment in get_safe_path_segments(old_cwd):
+                    os.chdir(segment)
+
+            else:
+                self._fd = open(self.path, "rb")
         unencrypted_data = self._fd.read(*args)
 
         if unencrypted_data:
@@ -117,18 +145,24 @@ class FileEncryptor:
             self._fd.close()
             self._fd = None
 
-    def encrypt_to_file(self, destination):
+    def encrypt_to_file(self, destination, overwrite=False):
         """
         encrypts the underlying file and writes it to destination
         using incremental reads
         """
-        # TODO: add overwrite protection
-        with open(destination, "wb") as f:
-            while True:
-                data = self.read(BUFFER_SIZE_BYTES)
-                if not data:
-                    break
-                f.write(data)
+        directory = pathlib.Path(destination).parent
+        filename = pathlib.Path(destination).name
+        with safe_cwd_cm(str(directory)):
+            if os.path.exists(filename) and not overwrite:
+                raise IOError(
+                    f"Destination file {destination} exists and overwrite is disabled."
+                )
+            with open(filename, "wb") as f:
+                while True:
+                    data = self.read(BUFFER_SIZE_BYTES)
+                    if not data:
+                        break
+                    f.write(data)
 
 
 class FileDecryptor:
@@ -144,9 +178,12 @@ class FileDecryptor:
         self._fd = None
         self.finalized = False
         self.decryptor = None
-        self.max_read_pos = (
-            os.path.getsize(path) - IV_SIZE_BYTES - TAG_SIZE_BYTES - SALT_SIZE_BYTES
-        )
+        dirname = str(pathlib.Path(path).parent)
+        filename = str(pathlib.Path(path).name)
+        with safe_cwd_cm(dirname):
+            self.max_read_pos = (
+                os.path.getsize(filename) - IV_SIZE_BYTES - TAG_SIZE_BYTES - SALT_SIZE_BYTES
+            )
         if self.max_read_pos < 0:
             raise IOError(
                 f"File size {os.path.getsize(path)} of {path} is too small to be decrypted."
@@ -159,7 +196,10 @@ class FileDecryptor:
         # TODO: ask for password interactively if not provided
         if password is None:
             raise NotImplementedError("Password must be provided")
-        self._fd = open(self.path, "rb")
+        dirname = str(pathlib.Path(self.path).parent)
+        filename = str(pathlib.Path(self.path).name)
+        with safe_cwd_cm(dirname):
+            self._fd = open(filename, "rb")
         self._fd.seek(-SALT_SIZE_BYTES - IV_SIZE_BYTES - TAG_SIZE_BYTES, os.SEEK_END)
         self.tag = self._fd.read(TAG_SIZE_BYTES)
         self.iv = self._fd.read(IV_SIZE_BYTES)
@@ -200,18 +240,24 @@ class FileDecryptor:
             decrypted_data += self.decryptor.finalize()
         return decrypted_data
 
-    def decrypt_to_file(self, destination):
+    def decrypt_to_file(self, destination, overwrite=False):
         """
         decrypts the underlying file and writes it to destination
         using incremental reads
         """
-        # TODO add overwrite switch
-        with open(destination, "wb") as f:
-            while True:
-                data = self.read(BUFFER_SIZE_BYTES)
-                if not data:
-                    break
-                f.write(data)
+        if os.path.exists(destination) and not overwrite:
+            raise IOError(
+                f"Destination file {destination} exists and overwrite is disabled."
+            )
+        dirname = str(pathlib.Path(destination).parent)
+        filename = str(pathlib.Path(destination).name)
+        with safe_cwd_cm(dirname):
+            with open(filename, "wb") as f:
+                while True:
+                    data = self.read(BUFFER_SIZE_BYTES)
+                    if not data:
+                        break
+                    f.write(data)
 
     def close(self):
         """closes the underlying file if open"""
@@ -264,6 +310,13 @@ def encrypt_filename(key: EncryptionKey, plaintext: str) -> bytes:
         )
     iv, ciphertext, tag = _encrypt(key, plaintext.encode("utf-8"))
     result = base64.urlsafe_b64encode(iv + tag + key.salt + ciphertext)
+    if len(result) > MAX_FILENAME_LENGTH:
+        raise RuntimeError(
+            f"Encrypted filename {result} is too long ({len(result)}). "
+            f"Max length is {MAX_FILENAME_LENGTH}. This is a bug. "
+            f"MAX_UNENCRYPTED_FILENAME_LENGTH={MAX_UNENCRYPTED_FILENAME_LENGTH} "
+            "needs to be lowered."
+        )
     return result
 
 
@@ -310,115 +363,187 @@ def list_encrypted_directory(directory, password=None):
         raise NotImplementedError("Password must be provided")
     encrypted_dirs = {}
     encrypted_files = {}
-    for root, dirs, files in os.walk(directory):
-        for dname in dirs:
-            decrypted_name = decrypt_filename(dname, password=password)
-            if decrypted_name in encrypted_dirs:
-                log.error(
-                    f"Duplicate directory name {decrypted_name} -> {dname} in {root}. Probably identical file encrypted with multiple keys."
-                )
-            encrypted_dirs[decrypted_name] = dname
-        for fname in files:
-            decrypted_name = decrypt_filename(fname, password=password)
-            if decrypted_name in encrypted_files:
-                log.error(
-                    f"Duplicate file name {decrypted_name} -> {fname} in {root}. Probably identical file encrypted with multiple keys."
-                )
-            encrypted_files[decrypted_name] = fname
-        break  # fist level only
+    with safe_cwd_cm(directory):
+        for root, dirs, files in os.walk("."):
+            root = directory
+            for dname in dirs:
+                decrypted_name = decrypt_filename(dname, password=password)
+                if decrypted_name in encrypted_dirs:
+                    log.error(
+                        f"Duplicate directory name {decrypted_name} -> {dname} in {root}. Probably identical file encrypted with multiple keys."
+                    )
+                encrypted_dirs[decrypted_name] = dname
+            for fname in files:
+                decrypted_name = decrypt_filename(fname, password=password)
+                if decrypted_name in encrypted_files:
+                    log.error(
+                        f"Duplicate file name {decrypted_name} -> {fname} in {root}. Probably identical file encrypted with multiple keys."
+                    )
+                encrypted_files[decrypted_name] = fname
+            break  # fist level only
     return (encrypted_dirs, encrypted_files)
+
+
+def safe_makedirs(dirpath: str, exist_ok: bool = False):
+    """creates diretories even if the path is longer than MAX_PATH_LENGTH"""
+    path = pathlib.Path(dirpath)
+    root = str(path.parent)
+    directory = str(path.name)
+    if len(path.parts) < 2:
+        raise ValueError(f"Invalid path: {dirpath}")
+    old_cwd = os.getcwd()
+    if len(dirpath) > MAX_PATH_LENGTH:
+        segments = get_safe_path_segments(root)
+        for segment in segments:
+            os.makedirs(segment, exist_ok=exist_ok)
+            os.chdir(segment)
+        os.makedirs(directory, exist_ok=exist_ok)
+    else:
+        os.makedirs(dirpath, exist_ok=exist_ok)
+    safe_cwd(old_cwd)
+
+
+def safe_is_dir(path: str):
+    """returns True if path is a directory, even if the path is longer than MAX_PATH_LENGTH"""
+    with safe_cwd_cm(os.getcwd()):
+        if len(path) > MAX_PATH_LENGTH:
+            segments = get_safe_path_segments(path)
+            for segment in segments:
+                if not os.path.isdir(segment):
+                    return False
+                os.chdir(segment)
+            return True
+        else:
+            return os.path.isdir(path)
 
 
 def encrypt_directory(source, destination, password):
     """encrypts all files and directories in directory and writes them to destination"""
     log.debug(f"encrypt_directory({source} -> {destination})")
-    os.makedirs(destination, exist_ok=True)
+    safe_makedirs(destination, exist_ok=True)
     key = EncryptionKey(password=password)
-    if not os.path.isdir(source):
+    if not safe_is_dir(source):
         raise ValueError(f"Directory {source} does not exist or is not a directory")
-    for root, dirs, files in os.walk(source):
-        # TODO: check if adding a new encrypted fname/dname would be beyond the MAX_PATH_LENGTH
-        existing_dirs, existing_files = list_encrypted_directory(
-            destination, password=password
-        )
-        log.debug(f"Source dirs in [{source}]: {dirs} Source files: {files}")
-        log.debug(
-            f"Existing encrypted dirs in [{destination}]: {existing_dirs} Existing files: {existing_files}"
-        )
-
-        for fname in files:
-            if fname in existing_files:
-                log.debug(
-                    f"Skipping already encrypted file {fname} -> {existing_files[fname]}"
-                )
-                continue
-            encrypted_filename = encrypt_filename(key, fname).decode("utf-8")
-            abs_fname = os.path.join(root, fname)
-            abs_enc_fname = os.path.join(destination, encrypted_filename)
-            log.debug(f"Encrypting file {fname} -> {encrypted_filename}")
-            file_encryptor = FileEncryptor(abs_fname, key)
-            file_encryptor.encrypt_to_file(os.path.join(destination, abs_enc_fname))
-            file_encryptor.close()
-        for dname in dirs:
-            abs_dname = os.path.join(root, dname)
-            if dname in existing_dirs:
-                log.debug(
-                    f"Skipping already encrypted directory {dname} -> {existing_dirs[dname]}"
-                )
-                abs_enc_dname = os.path.join(destination, existing_dirs[dname])
-            else:
-                encrypted_dirname = encrypt_filename(key, dname).decode("utf-8")
-                abs_enc_dname = os.path.join(destination, encrypted_dirname)
-                log.debug(f"Encrypting directory {dname} -> {encrypted_dirname}")
-                os.mkdir(abs_enc_dname)
-            encrypt_directory(
-                source=abs_dname, destination=abs_enc_dname, password=password
+    with safe_cwd_cm(source):
+        for root, dirs, files in os.walk("."):
+            root = source
+            existing_dirs, existing_files = list_encrypted_directory(
+                destination, password=password
             )
-        break  # one level in each call, the rest gets handled in the recurisve calls
+            log.debug(f"Source dirs in [{source}]: {dirs} Source files: {files}")
+            log.debug(
+                f"Existing encrypted dirs in [{destination}]: {existing_dirs} Existing files: {existing_files}"
+            )
+
+            for fname in files:
+                if fname in existing_files:
+                    log.debug(
+                        f"Skipping already encrypted file {fname} -> {existing_files[fname]}"
+                    )
+                    continue
+                encrypted_filename = encrypt_filename(key, fname).decode("utf-8")
+                abs_fname = os.path.join(root, fname)
+                abs_enc_fname = os.path.join(destination, encrypted_filename)
+                log.debug(f"Encrypting file {fname} -> {encrypted_filename}")
+                file_encryptor = FileEncryptor(abs_fname, key)
+                file_encryptor.encrypt_to_file(os.path.join(destination, abs_enc_fname))
+                file_encryptor.close()
+            for dname in dirs:
+                abs_dname = os.path.join(root, dname)
+                if dname in existing_dirs:
+                    log.debug(
+                        f"Skipping already encrypted directory {dname} -> {existing_dirs[dname]}"
+                    )
+                    abs_enc_dname = os.path.join(destination, existing_dirs[dname])
+                else:
+                    encrypted_dirname = encrypt_filename(key, dname).decode("utf-8")
+                    abs_enc_dname = os.path.join(destination, encrypted_dirname)
+                    log.debug(
+                        f"Encrypting directory {dname} {len(dname)} -> "
+                        f"{encrypted_dirname} {len(encrypted_dirname)}"
+                    )
+                    with safe_cwd_cm(destination):
+                        os.mkdir(encrypted_dirname)
+                encrypt_directory(
+                    source=abs_dname, destination=abs_enc_dname, password=password
+                )
+            break  # one level in each call, the rest gets handled in the recurisve calls
+
+
+def safe_cwd(directory: str):
+    """Changes to a directory that is over MAX_PATH_LENGTH"""
+    if len(directory) > MAX_PATH_LENGTH:
+        segments = get_safe_path_segments(directory)
+        for segment in segments:
+            os.chdir(segment)
+        if not os.getcwd() == directory:
+            raise RuntimeError(
+                f"Failed to change to directory {directory}, cwd is {os.getcwd()}, segments: {segments}"
+            )
+    else:
+        os.chdir(directory)
+
+
+@contextmanager
+def safe_cwd_cm(directory: str):
+    """
+    Context manager:
+    changes to a directory that is over MAX_PATH_LENGTH
+    and then back
+    """
+    old_cwd = os.getcwd()
+    try:
+        safe_cwd(directory)
+        yield
+    finally:
+        safe_cwd(old_cwd)
 
 
 def decrypt_directory(source, destination, password):
     """decrypts all files and directories in directory and writes them to destination"""
     log.debug(f"decrypt_directory({source} -> {destination})")
-    os.makedirs(destination, exist_ok=True)
-
-    if not os.path.isdir(source):
+    safe_makedirs(destination, exist_ok=True)
+    if not safe_is_dir(source):
         raise ValueError(f"Directory {source} does not exist or is not a directory")
-    for root, dirs, files in os.walk(source):
-        _, existing_dirs, existing_files = next(os.walk(destination))
-        log.debug(f"Source dirs in [{source}]: {dirs} Source files: {files}")
-        log.debug(
-            f"Existing decrypted dirs in [{destination}]: {existing_dirs} Existing files: {existing_files}"
-        )
-        for fname in files:
-            decrypted_filename = decrypt_filename(fname, password=password)
-            if decrypted_filename in existing_files:
-                log.debug(
-                    f"Skipping already decrypted file {fname} -> {decrypted_filename}"
-                )
-                continue
-            abs_fname = os.path.join(root, fname)
-            abs_dec_fname = os.path.join(destination, decrypted_filename)
-            log.debug(f"Decrypting file {fname} -> {decrypted_filename}")
-            file_decryptor = FileDecryptor(abs_fname, password=password)
-            file_decryptor.decrypt_to_file(os.path.join(destination, abs_dec_fname))
-            file_decryptor.close()
-        for dname in dirs:
-            abs_dname = os.path.join(root, dname)
-            decrypted_dirname = decrypt_filename(dname, password=password)
-            if decrypted_dirname in existing_dirs:
-                log.debug(
-                    f"Skipping already decrypted directory {dname} -> {decrypted_dirname}"
-                )
-                abs_dec_dname = os.path.join(destination, decrypted_dirname)
-            else:
-                abs_dec_dname = os.path.join(destination, decrypted_dirname)
-                log.debug(f"Decrypting directory {dname} -> {decrypted_dirname}")
-                os.mkdir(abs_dec_dname)
-            decrypt_directory(
-                source=abs_dname, destination=abs_dec_dname, password=password
+    with safe_cwd_cm(source):
+        for root, dirs, files in os.walk("."):
+            root = source # override due to cwd context manager
+            with safe_cwd_cm(destination):
+                _, existing_dirs, existing_files = next(os.walk("."))
+            log.debug(f"Source dirs in [{source}]: {dirs} Source files: {files}")
+            log.debug(
+                f"Existing decrypted dirs in [{destination}]: {existing_dirs} Existing files: {existing_files}"
             )
-        break  # one level in each call, the rest gets handled in the recurisve calls
+            for fname in files:
+                decrypted_filename = decrypt_filename(fname, password=password)
+                if decrypted_filename in existing_files:
+                    log.debug(
+                        f"Skipping already decrypted file {fname} -> {decrypted_filename}"
+                    )
+                    continue
+                abs_fname = os.path.join(root, fname)
+                abs_dec_fname = os.path.join(destination, decrypted_filename)
+                log.debug(f"Decrypting file {fname} -> {decrypted_filename}")
+                file_decryptor = FileDecryptor(abs_fname, password=password)
+                file_decryptor.decrypt_to_file(os.path.join(destination, abs_dec_fname))
+                file_decryptor.close()
+            for dname in dirs:
+                abs_dname = os.path.join(root, dname)
+                decrypted_dirname = decrypt_filename(dname, password=password)
+                if decrypted_dirname in existing_dirs:
+                    log.debug(
+                        f"Skipping already decrypted directory {dname} -> {decrypted_dirname}"
+                    )
+                    abs_dec_dname = os.path.join(destination, decrypted_dirname)
+                else:
+                    abs_dec_dname = os.path.join(destination, decrypted_dirname)
+                    log.debug(f"Decrypting directory {dname} -> {decrypted_dirname}")
+                    with safe_cwd_cm(destination):
+                        os.mkdir(decrypted_dirname)
+                decrypt_directory(
+                    source=abs_dname, destination=abs_dec_dname, password=password
+                )
+            break  # one level in each call, the rest gets handled in the recurisve calls
 
 
 if __name__ == "__main__":

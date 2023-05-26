@@ -7,6 +7,7 @@ import cryptography.exceptions
 import base64
 import shutil
 import logging
+import pathlib
 
 backup.log.setLevel(backup.logging.ERROR)
 
@@ -14,6 +15,7 @@ logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger(__name__)
 log.setLevel(logging.DEBUG)
 
+# pylint: disable=logging-fstring-interpolation
 
 class EncryptionKeyTest(unittest.TestCase):
     def test_new_key(self):
@@ -32,7 +34,6 @@ class EncryptionKeyTest(unittest.TestCase):
 
 class FileEncryptorTest(unittest.TestCase):
     def setUp(self):
-        self.created_files = []
         self.test_dir = tempfile.mkdtemp(prefix="backup_test_")
         self.test_file = self.get_temp_file()
         self.test_data = b"test" * 1024 * 1024
@@ -40,19 +41,13 @@ class FileEncryptorTest(unittest.TestCase):
             tfd.write(self.test_data)
         self.password = "test"
 
-    def add_file(self, path):
-        self.created_files.append(path)
-
-    def get_temp_file(self):
-        fd, path = tempfile.mkstemp(dir=self.test_dir)
+    def get_temp_file(self, prefix=""):
+        fd, path = tempfile.mkstemp(dir=self.test_dir, prefix=prefix)
         os.close(fd)
-        self.add_file(path)
         return path
 
     def tearDown(self):
-        for f in self.created_files:
-            os.remove(os.path.join(self.test_dir, f))
-        os.rmdir(self.test_dir)
+        shutil.rmtree(self.test_dir)
 
     def test_encrypt_file(self):
         key = EncryptionKey(password=self.password)
@@ -108,26 +103,34 @@ class FileEncryptorTest(unittest.TestCase):
         dec_unbuf = backup.FileDecryptor(path=enc_unbuf_file, password=self.password)
         dec_unbuf_data = dec_unbuf.read()
         dec_unbuf.close()
-        self.assertEqual(dec_buf_data, dec_unbuf_data, "Buffered and unbuffered decryption do not match")
-        self.assertEqual(dec_buf_data, self.test_data, "Decrypted data does not match original data")
+        self.assertEqual(
+            dec_buf_data,
+            dec_unbuf_data,
+            "Buffered and unbuffered decryption do not match",
+        )
+        self.assertEqual(
+            dec_buf_data, self.test_data, "Decrypted data does not match original data"
+        )
 
     def test_encrypt_to_file(self):
         key = EncryptionKey(password=self.password)
         enc_file = self.get_temp_file()
         enc = backup.FileEncryptor(path=self.test_file, key=key)
-        enc.encrypt_to_file(enc_file)
+        enc.encrypt_to_file(enc_file, overwrite=True)
         enc.close()
         # decrypt
         dec = backup.FileDecryptor(path=enc_file, password=self.password)
         dec_data = dec.read()
         dec.close()
-        self.assertEqual(dec_data, self.test_data, "Decrypted data does not match original data")
+        self.assertEqual(
+            dec_data, self.test_data, "Decrypted data does not match original data"
+        )
 
     def test_invalid_data_decryption(self):
         key = EncryptionKey(password=self.password)
         enc_file = self.get_temp_file()
         enc = backup.FileEncryptor(path=self.test_file, key=key)
-        enc.encrypt_to_file(enc_file)
+        enc.encrypt_to_file(enc_file, overwrite=True)
         enc.close()
         # corrupt data
         with open(enc_file, "r+b") as tfd:
@@ -163,6 +166,105 @@ class FileEncryptorTest(unittest.TestCase):
         enc_file = self.get_temp_file()
         with self.assertRaises(IOError):
             backup.FileDecryptor(path=enc_file, password=self.password)
+
+    def test_encrypt_existing_file_overwrite(self):
+        key = EncryptionKey(password=self.password)
+        orig_data = b"original data"
+        enc_file = self.get_temp_file()
+        with open(enc_file, "wb") as tfd:
+            tfd.write(orig_data)
+        enc = backup.FileEncryptor(path=self.test_file, key=key)
+        dest_file = self.get_temp_file()
+        with self.assertRaises(OSError):
+            enc.encrypt_to_file(dest_file)
+        enc.close()
+        enc = backup.FileEncryptor(path=self.test_file, key=key)
+        enc.encrypt_to_file(dest_file, overwrite=True)
+        enc.close()
+        with open(dest_file, "rb") as tfd:
+            enc_data = tfd.read()
+        self.assertNotEqual(orig_data, enc_data)
+
+    def test_decrypt_existing_file_overwrite(self):
+        key = EncryptionKey(password=self.password)
+        enc_file = self.get_temp_file()
+        enc = backup.FileEncryptor(path=self.test_file, key=key)
+        enc.encrypt_to_file(enc_file, overwrite=True)
+        enc.close()
+        dec = backup.FileDecryptor(path=enc_file, password=self.password)
+        dest_file = self.get_temp_file()
+        orig_data = b"original data"
+        with open(dest_file, "wb") as tfd:
+            tfd.write(orig_data)
+        with self.assertRaises(OSError):
+            dec.decrypt_to_file(dest_file)
+        dec.close()
+        dec = backup.FileDecryptor(path=enc_file, password=self.password)
+        dec.decrypt_to_file(dest_file, overwrite=True)
+        dec.close()
+        with open(dest_file, "rb") as tfd:
+            dec_data = tfd.read()
+        self.assertNotEqual(orig_data, dec_data)
+    
+    def test_filename_too_long_for_encryption(self):
+        filename = "x" * (backup.MAX_FILENAME_LENGTH + 1)
+        key = EncryptionKey(password=self.password)
+        with self.assertRaises(ValueError):
+            backup.encrypt_filename(key, filename)
+
+    def test_structures_larger_than_max_path_limits(self):
+        source_dir = tempfile.mkdtemp(dir=self.test_dir, prefix="source-")
+        dest_dir = tempfile.mkdtemp(dir=self.test_dir, prefix="encrypted-")
+        dec_dir = tempfile.mkdtemp(dir=self.test_dir, prefix="decrypted-")
+        current_path_length = len(source_dir)
+        dir_name_size = backup.MAX_UNENCRYPTED_FILENAME_LENGTH # length of directory name
+        # long enough but not too much for os.makedirs
+        depth = int((backup.MAX_PATH_LENGTH - current_path_length) / dir_name_size) -1
+        dirtree = "/".join([ str(_)+"x"*(dir_name_size - len(str(_))) for  _ in range(depth)])
+        last_dir = os.path.join(source_dir, dirtree)
+        os.makedirs(last_dir)
+        filename = "f" * backup.MAX_UNENCRYPTED_FILENAME_LENGTH
+        os.chdir(last_dir)
+        os.makedirs(dirtree) # double the "long enough", so it's definitely too much :)
+        os.chdir(dirtree)
+        log.debug(f"Current dir length: {len(os.getcwd())}")
+        with open(filename, "wb") as tfd:
+            tfd.write(b"test")
+        abs_filename = os.path.join(os.getcwd(), filename)
+        log.debug(f"Abs path length of test filename: {len(abs_filename)}")
+        backup.encrypt_directory(source_dir, dest_dir, password=self.password)
+        backup.decrypt_directory(dest_dir, dec_dir, password=self.password)
+
+        source_walker = os.walk(source_dir)
+        decrypted_walker = os.walk(dec_dir)
+        while True:
+            try:
+                source_root, source_dirs, source_files = next(source_walker)
+                decrypted_root, decrypted_dirs, decrypted_files = next(decrypted_walker)
+            except StopIteration:
+                break
+            self.assertEqual(len(source_files), len(decrypted_files), "Number of files in source and decrypted directory does not match")
+            self.assertEqual(len(source_dirs), len(decrypted_dirs), "Number of directories in source and decrypted directory does not match")
+            for source_file, decrypted_file in zip(source_files, decrypted_files):
+                with open(os.path.join(source_root, source_file), "rb") as tfd:
+                    source_data = tfd.read()
+                with open(os.path.join(decrypted_root, decrypted_file), "rb") as tfd:
+                    decrypted_data = tfd.read()
+                self.assertEqual(
+                    source_data, decrypted_data, "Decrypted data does not match source"
+                )
+        enc = backup.FileEncryptor(path=abs_filename, key=EncryptionKey(password=self.password))
+        enc.read()
+        enc.close()
+
+
+
+
+        
+
+
+
+        
 
 
 class FileNameEncryptionTest(unittest.TestCase):
@@ -258,10 +360,12 @@ class DirectoryEncryptionTest(unittest.TestCase):
                     source_data = tfd.read()
                 with open(os.path.join(encrypted_root, encrypted_file), "rb") as tfd:
                     encrypted_data = tfd.read()
-                self.assertNotEqual(source_data, encrypted_data, "Source data found in encrypted file")
+                self.assertNotEqual(
+                    source_data, encrypted_data, "Source data found in encrypted file"
+                )
 
     def test_decrypt_directory(self):
-        ''' encrypt, decrypt and compare with source for one-to-one match across the tree'''
+        """encrypt, decrypt and compare with source for one-to-one match across the tree"""
         self.create_fs_tree(self.source_dir)
         backup.encrypt_directory(
             self.source_dir, self.encrypted_dir, password=self.password
@@ -274,9 +378,7 @@ class DirectoryEncryptionTest(unittest.TestCase):
         while True:
             try:
                 source_root, source_dirs, source_files = next(source_walker)
-                decrypted_root, decrypted_dirs, decrypted_files = next(
-                    decrypted_walker
-                )
+                decrypted_root, decrypted_dirs, decrypted_files = next(decrypted_walker)
             except StopIteration:
                 break
             self.assertEqual(len(source_files), len(decrypted_files))
@@ -286,11 +388,12 @@ class DirectoryEncryptionTest(unittest.TestCase):
                     source_data = tfd.read()
                 with open(os.path.join(decrypted_root, decrypted_file), "rb") as tfd:
                     decrypted_data = tfd.read()
-                self.assertEqual(source_data, decrypted_data, "Decrypted data does not match source")
+                self.assertEqual(
+                    source_data, decrypted_data, "Decrypted data does not match source"
+                )
 
 
-        
-
+# TODO: test path size limits
 
 
 if __name__ == "__main__":
