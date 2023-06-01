@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 
 
 SCRYPT_N = 2**14
-BUFFER_SIZE_BYTES = 32 * 1024 * 1024
+BUFFER_SIZE_BYTES = 4 * 1024 * 1024
 IV_SIZE_BYTES = 12
 TAG_SIZE_BYTES = 16
 SALT_SIZE_BYTES = 16
@@ -158,11 +158,16 @@ class FileEncryptor:
                     f"Destination file {destination} exists and overwrite is disabled."
                 )
             with open(filename, "wb") as f:
-                while True:
-                    data = self.read(BUFFER_SIZE_BYTES)
-                    if not data:
-                        break
-                    f.write(data)
+                try:
+                    while True:
+                        data = self.read(BUFFER_SIZE_BYTES)
+                        if not data:
+                            break
+                        f.write(data)
+                except IOError as e:
+                    log.error(f"Error encountered: {e}")
+                    os.unlink(filename) # no not keep partial files present on the disk
+                    raise
 
 
 class FileDecryptor:
@@ -215,12 +220,15 @@ class FileDecryptor:
             algorithms.AES256(self.key.key),
             modes.GCM(self.iv, self.tag),
         ).decryptor()
+        self.crypto_init_done = True
 
     def read(self, size=None):
         """
         reads an encrypted underlying file and
         decrypts the file content, returns decrypted data
         """
+        if not self.crypto_init_done:
+            self._init_crypto()
         if self.finalized:
             return b""
         args = []
@@ -249,6 +257,8 @@ class FileDecryptor:
             raise IOError(
                 f"Destination file {destination} exists and overwrite is disabled."
             )
+        if not self.crypto_init_done:
+            self._init_crypto()
         dirname = str(pathlib.Path(destination).parent)
         filename = str(pathlib.Path(destination).name)
         with safe_cwd_cm(dirname):
