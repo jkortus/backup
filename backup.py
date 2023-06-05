@@ -4,7 +4,9 @@ import os
 import base64
 import logging
 from contextlib import contextmanager
+from typing import Self
 import pathlib
+from copy import deepcopy
 
 # pylint: disable=logging-fstring-interpolation
 
@@ -37,6 +39,130 @@ log.debug(f"Max unencrypted filename length: {MAX_UNENCRYPTED_FILENAME_LENGTH}")
 
 _KEYSTORE = {}  # cached keys for detected salts
 
+
+class FSFile:
+    """File system file"""
+    def __init__(self, name: str):
+        self.name = name
+        self.is_encrypted = is_encrypted(self.name)
+        if self.is_encrypted:
+            self.decrypted_name = decrypt_filename(self.name, password=get_password())
+    
+class FSDirectory:
+    """File system directory"""
+    def __init__(self, name: str, root:None|str = None):
+        self.name = name
+        self.root = root
+        self.files = set()
+        self.directories = set()
+        self.is_encrypted = is_encrypted(self.name)
+        if self.is_encrypted:
+            self.decrypted_name = decrypt_filename(self.name, password=get_password())
+
+    def add_directory(self, directory: Self):
+        self.directories.add(directory)
+    
+    def add_file(self, file: FSFile):
+        self.files.add(file)
+    
+    def get_directory(self, name: str):
+        for directory in self.directories:
+            if directory.is_encrypted:
+                if directory.decrypted_name == name:
+                    return directory
+            elif directory.name == name:
+                return directory
+        raise KeyError(f"Directory {name} not found")
+    
+    def is_empty(self):
+        return len(self.files) == 0 and len(self.directories) == 0
+    
+    def dir_names(self):
+        result = set()
+        for d in self.directories:
+            if d.is_encrypted:
+                result.add(d.decrypted_name)
+            else:
+                result.add(d.name)
+        return result
+    
+    def file_names(self):
+        result = set()
+        for f in self.files:
+            if f.is_encrypted:
+                result.add(f.decrypted_name)
+            else:
+                result.add(f.name)
+        return result
+        
+
+    def pretty_print(self, indent: int = 2):
+        """prints the directory structure"""
+        print(f"{' ' * indent}{self.name} [root: {self.root}] {'(encrypted)' if self.is_encrypted else ''}")
+        for directory in self.directories:
+            directory.pretty_print(indent=indent+2)
+        for file in self.files:
+            print(f"{' ' * (indent+2)}{file.name} {'(encrypted)' if file.is_encrypted else ''}")
+    
+    @classmethod
+    def from_filesystem(cls, path: str):
+        """creates a directory tree from the file system"""
+        if not safe_is_dir(path):
+            raise IOError(f"Directory {path} does not exist or is not a directory")
+        with safe_cwd_cm(path):
+            _, dirs, files = next(os.walk("."))
+            log.debug(f"Content of {path}: dirs: {dirs} files: {files}")
+        name = pathlib.Path(path).name
+        parent = pathlib.Path(path).parent
+        directory = cls(name=name, root=parent)
+        for dname in dirs:
+            directory.add_directory(cls.from_filesystem(os.path.join(path, dname)))
+        for fname in files:
+            directory.add_file(FSFile(name=fname))
+        return directory
+
+    def diff(self, other: Self) -> Self|None:
+        """
+        compares two directory trees
+        returns a new FSDirectory with entries that are not in self
+        and are in other, including their parent elements if nested deeper.
+
+        Returns None if the trees are identical
+        """
+        #TODO: tests!
+        result = None
+        
+        
+        for directory in other.directories:
+            dir_name = directory.name if not directory.is_encrypted else directory.decrypted_name
+            if dir_name not in self.dir_names():
+                # if the directory is completely new, add the whole subtree from other
+                subtree_copy = deepcopy(directory)
+                if result is None:
+                    result = FSDirectory(name=self.name, root=self.root)
+                result.add_directory(subtree_copy)
+            else:
+                # if the directory already exists, compare the subtrees
+                subresult = self.get_directory(dir_name).diff(directory)
+                if subresult:
+                    if result is None:
+                        result = FSDirectory(name=self.name, root=self.root)
+                    result.add_directory(subresult)
+        for fname in other.file_names():
+            filename = fname if not is_encrypted(fname) else decrypt_filename(fname, password=get_password())
+            if filename not in self.file_names():
+                if result is None:
+                    result = FSDirectory(name=self.name, root=self.root)
+                result.add_file(FSFile(name=fname))
+        
+        return result
+
+    
+
+        
+
+
+   
 
 class EncryptionKey:
     """Encryption key with all data needed to derive it back from password"""
@@ -335,10 +461,15 @@ def decrypt_filename(encrypted_filename: bytes, password=None) -> str:
     # pylint: disable=invalid-name
     if password is None:
         raise NotImplementedError("Password must be provided")
-    decoded = base64.urlsafe_b64decode(encrypted_filename)
+    try:
+        decoded = base64.urlsafe_b64decode(encrypted_filename)
+    except Exception as ex:
+        log.error(f"Failed to decode filename {encrypted_filename}: {ex}")
+        raise ValueError(f"Failed to decode filename {encrypted_filename}. Probably invalid (non-encrypted) filename for decryption?: {ex}")
+    
     if len(decoded) < IV_SIZE_BYTES + TAG_SIZE_BYTES + SALT_SIZE_BYTES:
         raise ValueError(
-            "Invalid encrypted filename. Too short to get all required metadata."
+            f"Invalid encrypted filename ({encrypted_filename}). Too short to get all required metadata."
         )
     iv = decoded[:IV_SIZE_BYTES]
     tag = decoded[IV_SIZE_BYTES : IV_SIZE_BYTES + TAG_SIZE_BYTES]
@@ -358,7 +489,12 @@ def decrypt_filename(encrypted_filename: bytes, password=None) -> str:
         key = EncryptionKey(password=password, salt=salt)
         _KEYSTORE[salt] = key
     ciphertext = decoded[IV_SIZE_BYTES + TAG_SIZE_BYTES + SALT_SIZE_BYTES :]
-    return _decrypt(key, iv, ciphertext, tag).decode("utf-8")
+    try:
+        return _decrypt(key, iv, ciphertext, tag).decode("utf-8")
+    except Exception as ex:
+        log.error(f"Failed to decrypt filename {encrypted_filename}: {ex}")
+        raise ValueError(f"Failed to decrypt filename {encrypted_filename}. Probably invalid name for decryption?: {ex}")
+
 
 
 def list_encrypted_directory(directory, password=None):
@@ -369,6 +505,7 @@ def list_encrypted_directory(directory, password=None):
             {'decrypted_file_name': 'encrypted_file_name,...},
     """
     # TODO: ask for password interactively if not provided
+    # TODO: add tests
     if password is None:
         raise NotImplementedError("Password must be provided")
     encrypted_dirs = {}
@@ -377,6 +514,7 @@ def list_encrypted_directory(directory, password=None):
         for root, dirs, files in os.walk("."):
             root = directory
             for dname in dirs:
+                # TODO: error handling for invalid (=unecrypted) filenames
                 decrypted_name = decrypt_filename(dname, password=password)
                 if decrypted_name in encrypted_dirs:
                     log.error(
@@ -393,6 +531,8 @@ def list_encrypted_directory(directory, password=None):
             break  # fist level only
     return (encrypted_dirs, encrypted_files)
 
+
+    
 
 def safe_makedirs(dirpath: str, exist_ok: bool = False):
     """creates diretories even if the path is longer than MAX_PATH_LENGTH"""
@@ -560,11 +700,110 @@ def decrypt_directory(source, destination, password):
                 )
             break  # one level in each call, the rest gets handled in the recurisve calls
 
+def compare_directories(source: str, destination: str, password: str):
+    """compares two directories, non-recursive"""
+    source_is_encrypted = False
+    destination_is_encrypted = True
+    if not safe_is_dir(source):
+        raise IOError(f"Directory {source} does not exist or is not a directory")
+    if not safe_is_dir(destination):
+        raise IOError(
+            f"Directory {destination} does not exist or is not a directory"
+        )
+    with safe_cwd_cm(source):
+        _, source_dirs, source_files = next(os.walk("."))   
+        log.debug(f"Source content {source}: dirs: {source_dirs} files: {source_files}")
+    with safe_cwd_cm(destination):
+        encrypted_content = list_encrypted_directory(destination, password=password)
+        destination_dirs = list(encrypted_content[0].keys())
+        destination_files = list(encrypted_content[1].keys())
+        
+        log.debug(f"Destination content {destination}: dirs: [{destination_dirs}] files: {destination_files}")
+    
+    result = {
+        "source_new":[],
+        "source_missing":[],
+        "destination_new":[],
+        "destination_missing":[],
+    }
+    for dname in source_dirs:
+        if dname not in destination_dirs:
+            result["source_new"].append(dname)
+    for fname in source_files:
+        if fname not in destination_files:
+            result["source_new"].append(fname)
+    for dname in destination_dirs:
+        if dname not in source_dirs:
+            result["destination_new"].append(dname)
+    for fname in destination_files:
+        if fname not in source_files:
+            result["destination_new"].append(fname)
+    log.debug(f"Comparison result: {result}")
+    return result
+
+def create_fs_tree(root: str) -> FSDirectory:
+    """ creates a dictionary of the file system tree below root (recursively) """
+    if not safe_is_dir(root):
+        raise IOError(f"Directory {root} does not exist or is not a directory")
+    with safe_cwd_cm(root):
+        _, dirs, files = next(os.walk("."))
+        log.debug(f"Content of {root}: dirs: {dirs} files: {files}")
+    fs_root = FSDirectory(name=root, root=root)
+    for dname in dirs:
+        fs_root.add_directory(create_fs_tree(os.path.join(root, dname)))
+    for fname in files:
+        fs_root.add_file(FSFile(name=fname))
+    return fs_root
+
+
+def get_password():
+    """asks for password interactively"""
+    #password = getpass.getpass(prompt="Password: ")
+    return "test"
+
+def is_encrypted(filename: str):
+    """ guess if the filename is an encrypted string"""
+    try:
+        decrypt_filename(filename, password=get_password())
+        log.debug(f"guessing is_encrypted({filename}) -> True")
+        return True
+    except Exception:
+        log.debug(f"guessing is_encrypted({filename}) -> False")
+        return False
+    
+        
+
 
 if __name__ == "__main__":
-    encrypt_directory(
-        "/tmp/backup_test/source", "/tmp/backup_test/destination", password="test"
-    )
-    decrypt_directory(
-        "/tmp/backup_test/destination", "/tmp/backup_test/decrypted", password="test"
-    )
+    # encrypt_directory(
+    #     "/tmp/backup_test/source", "/tmp/backup_test/encrypted", password="test"
+    # )
+
+    # decrypt_directory(
+    #     "/tmp/backup_test/encrypted", "/tmp/backup_test/decrypted", password="test"
+    # )
+    
+    #compare_directories("/tmp/backup_test/source", "/tmp/backup_test/encrypted", password="test")
+    # encrypt_directory(
+    #     "/tmp/backup_test/source-new", "/tmp/backup_test/encrypted", password="test"
+    # )
+    root1 = FSDirectory.from_filesystem("/data/tmp/test/root-01")
+    # encrypt_directory("/data/tmp/test/root-01", "/data/tmp/test/encrypted-01", password="test")
+    encrypted = FSDirectory.from_filesystem("/data/tmp/test/encrypted-01")
+    encrypted.pretty_print()
+    diff = root1.diff(encrypted)
+    if diff:
+        diff.pretty_print()
+    else:
+        print("Trees are identical")
+
+    diff2 = encrypted.diff(root1)
+    if diff2:
+        diff2.pretty_print()
+    else:
+        print("Trees are identical")
+
+    
+
+#TODO: next - projit jeste diff logiku a zcela ji porozumet, abych ji mohl verit
+#TODO: pak zacit psat testy 
