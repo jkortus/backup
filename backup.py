@@ -6,6 +6,7 @@ import logging
 from contextlib import contextmanager
 from typing import Self
 import pathlib
+import copy
 from copy import deepcopy
 
 # pylint: disable=logging-fstring-interpolation
@@ -60,6 +61,9 @@ class FSDirectory:
             self.decrypted_name = decrypt_filename(self.name, password=get_password())
 
     def add_directory(self, directory: Self):
+        if directory.name in self.dir_names():
+            # TODO: add tests for this
+            raise ValueError(f"Directory {directory.name} already exists in {self.name}")
         self.directories.add(directory)
     
     def add_file(self, file: FSFile):
@@ -94,16 +98,24 @@ class FSDirectory:
             else:
                 result.add(f.name)
         return result
+    
+    def __str__(self):
+        return f"FSDirectory(name={self.name}, root={self.root}, encrypted={self.is_encrypted})"
         
 
     def pretty_print(self, indent: int = 2):
         """prints the directory structure"""
-        print(f"{' ' * indent}{self.name} [root: {self.root}] {'(encrypted)' if self.is_encrypted else ''}")
+        print(self.dump(indent=indent))    
+
+    def dump(self, indent: int=2):
+        result = ""
+        result+=f"{' ' * indent}{self.name} ({id(self)}) [root: {self.root}] {'(encrypted)' if self.is_encrypted else ''}\n"
         for directory in self.directories:
-            directory.pretty_print(indent=indent+2)
+            result += directory.dump(indent=indent+2)
         for file in self.files:
-            print(f"{' ' * (indent+2)}{file.name} {'(encrypted)' if file.is_encrypted else ''}")
-    
+            result+=f"{' ' * (indent+2)}{file.name} {'(encrypted)' if file.is_encrypted else ''}\n"
+        return result
+
     @classmethod
     def from_filesystem(cls, path: str):
         """creates a directory tree from the file system"""
@@ -111,7 +123,7 @@ class FSDirectory:
             raise IOError(f"Directory {path} does not exist or is not a directory")
         with safe_cwd_cm(path):
             _, dirs, files = next(os.walk("."))
-            log.debug(f"Content of {path}: dirs: {dirs} files: {files}")
+            #log.debug(f"Content of {path}: dirs: {dirs} files: {files}")
         name = pathlib.Path(path).name
         parent = pathlib.Path(path).parent
         directory = cls(name=name, root=parent)
@@ -121,17 +133,18 @@ class FSDirectory:
             directory.add_file(FSFile(name=fname))
         return directory
 
-    def diff(self, other: Self) -> Self|None:
+    def one_way_diff(self, other: Self) -> Self|None:
         """
         compares two directory trees
         returns a new FSDirectory with entries that are not in self
-        and are in other, including their parent elements if nested deeper.
+        and are in the other, including their parent elements if nested deeper.
+
+        In other words returns new elements in the other.
 
         Returns None if the trees are identical
         """
         #TODO: tests!
         result = None
-        
         
         for directory in other.directories:
             dir_name = directory.name if not directory.is_encrypted else directory.decrypted_name
@@ -139,21 +152,23 @@ class FSDirectory:
                 # if the directory is completely new, add the whole subtree from other
                 subtree_copy = deepcopy(directory)
                 if result is None:
-                    result = FSDirectory(name=self.name, root=self.root)
+                    # return copy of self without any nested elements (dirs, files)
+                    result = self.__class__(name=self.name, root=self.root)
                 result.add_directory(subtree_copy)
             else:
                 # if the directory already exists, compare the subtrees
-                subresult = self.get_directory(dir_name).diff(directory)
+                subresult = self.get_directory(dir_name).one_way_diff(directory)
                 if subresult:
                     if result is None:
-                        result = FSDirectory(name=self.name, root=self.root)
+                        result = self.__class__(name=self.name, root=self.root)
                     result.add_directory(subresult)
+
         for fname in other.file_names():
             filename = fname if not is_encrypted(fname) else decrypt_filename(fname, password=get_password())
             if filename not in self.file_names():
                 if result is None:
-                    result = FSDirectory(name=self.name, root=self.root)
-                result.add_file(FSFile(name=fname))
+                    result = self.__class__(name=self.name, root=self.root)
+                result.add_file(copy.deepcopy(FSFile(name=fname)))
         
         return result
 
@@ -464,7 +479,7 @@ def decrypt_filename(encrypted_filename: bytes, password=None) -> str:
     try:
         decoded = base64.urlsafe_b64decode(encrypted_filename)
     except Exception as ex:
-        log.error(f"Failed to decode filename {encrypted_filename}: {ex}")
+        #log.error(f"Failed to decode filename {encrypted_filename}: {ex}")
         raise ValueError(f"Failed to decode filename {encrypted_filename}. Probably invalid (non-encrypted) filename for decryption?: {ex}")
     
     if len(decoded) < IV_SIZE_BYTES + TAG_SIZE_BYTES + SALT_SIZE_BYTES:
@@ -492,8 +507,8 @@ def decrypt_filename(encrypted_filename: bytes, password=None) -> str:
     try:
         return _decrypt(key, iv, ciphertext, tag).decode("utf-8")
     except Exception as ex:
-        log.error(f"Failed to decrypt filename {encrypted_filename}: {ex}")
-        raise ValueError(f"Failed to decrypt filename {encrypted_filename}. Probably invalid name for decryption?: {ex}")
+        #log.debug(f"Failed to decrypt filename {encrypted_filename}: {ex}")
+        raise
 
 
 
@@ -765,10 +780,10 @@ def is_encrypted(filename: str):
     """ guess if the filename is an encrypted string"""
     try:
         decrypt_filename(filename, password=get_password())
-        log.debug(f"guessing is_encrypted({filename}) -> True")
+        #log.debug(f"guessing is_encrypted({filename}) -> True")
         return True
     except Exception:
-        log.debug(f"guessing is_encrypted({filename}) -> False")
+        #log.debug(f"guessing is_encrypted({filename}) -> False")
         return False
     
         
@@ -791,13 +806,13 @@ if __name__ == "__main__":
     # encrypt_directory("/data/tmp/test/root-01", "/data/tmp/test/encrypted-01", password="test")
     encrypted = FSDirectory.from_filesystem("/data/tmp/test/encrypted-01")
     encrypted.pretty_print()
-    diff = root1.diff(encrypted)
+    diff = root1.one_way_diff(encrypted)
     if diff:
         diff.pretty_print()
     else:
         print("Trees are identical")
 
-    diff2 = encrypted.diff(root1)
+    diff2 = encrypted.one_way_diff(root1)
     if diff2:
         diff2.pretty_print()
     else:
