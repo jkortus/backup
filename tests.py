@@ -1,7 +1,7 @@
 import os
 import backup
 import unittest
-from backup import EncryptionKey, FSDirectory
+from backup import EncryptionKey, FSDirectory, FSFile
 import tempfile
 import cryptography.exceptions
 import base64
@@ -488,9 +488,45 @@ class DirectoryComparisonTest(unittest.TestCase):
         self.assertIsNotNone(dir1.one_way_diff(dir2), "Difference expected on different directories")
         self.assertEqual(len(dir1.one_way_diff(dir2).directories), 2, "Two new directories expected in diff")
 
-        
 
+class FSDirectoryTest(unittest.TestCase):
+    def test_add_str_instead_of_dir(self):
+        dir1 = FSDirectory(name="root")
+        with self.assertRaises(TypeError):
+            dir1.add_directory("dir1")
+    
+    def test_duplicit_dir_add(self):
+        dir1 = FSDirectory(name="root")
+        dir1.add_directory(FSDirectory("dir1"))
+        with self.assertRaises(ValueError, msg="Adding already existing name should raise ValueError"):
+            dir1.add_directory(FSDirectory("dir1"))
+
+    def test_add_str_instead_of_file(self):
+        dir1 = FSDirectory(name="root")
+        with self.assertRaises(TypeError):
+            dir1.add_file("file1")
+
+    def test_add_duplicit_file(self):
+        dir1 = FSDirectory(name="root")
+        dir1.add_file(FSFile("file1"))
+        with self.assertRaises(ValueError, msg="Adding already existing name should raise ValueError"):
+            dir1.add_file(FSFile("file1"))
+
+    def test_add_file_with_same_name_as_dir(self):
+        dir1 = FSDirectory(name="root")
+        dir1.add_directory(FSDirectory("dir1"))
+        with self.assertRaises(ValueError, msg="Adding already existing name should raise ValueError"):
+            dir1.add_file(FSFile("dir1"))
+    
+    def test_add_dir_with_same_name_as_file(self):
+        dir1 = FSDirectory(name="root")
+        dir1.add_file(FSFile("file1"))
+        with self.assertRaises(ValueError, msg="Adding already existing name should raise ValueError"):
+            dir1.add_directory(FSDirectory("file1"))
 
 
 if __name__ == "__main__":
-    unittest.main()
+    # execute only FSDirectoryTest if called directly
+    unittest.main(defaultTest="FSDirectoryTest")
+
+    

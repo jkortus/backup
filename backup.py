@@ -61,12 +61,17 @@ class FSDirectory:
             self.decrypted_name = decrypt_filename(self.name, password=get_password())
 
     def add_directory(self, directory: Self):
-        if directory.name in self.dir_names():
-            # TODO: add tests for this
+        if not isinstance(directory, self.__class__):
+            raise TypeError(f"Invalid arg for directory, expected {self.__class__}, got {type(directory)}")
+        if directory.name in self.dir_names() | self.file_names():
             raise ValueError(f"Directory {directory.name} already exists in {self.name}")
         self.directories.add(directory)
     
     def add_file(self, file: FSFile):
+        if not isinstance(file, FSFile):
+            raise TypeError(f"Invalid arg for file, expected {FSFile}, got {type(file)}")
+        if file.name in self.file_names() | self.dir_names():
+            raise ValueError(f"File {file.name} already exists in {self.name}")
         self.files.add(file)
     
     def get_directory(self, name: str):
@@ -143,7 +148,6 @@ class FSDirectory:
 
         Returns None if the trees are identical
         """
-        #TODO: tests!
         result = None
         
         for directory in other.directories:
