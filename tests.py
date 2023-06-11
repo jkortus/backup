@@ -15,8 +15,9 @@ logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger(__name__)
 log.setLevel(logging.WARNING)
 
+
 # pylint: disable=logging-fstring-interpolation
-#TODO: add test for encryption of filename of length MAX_FILENAME_LENGTH to make sure we deliver
+# TODO: add test for encryption of filename of length MAX_FILENAME_LENGTH to make sure we deliver
 # on our promises :)
 class EncryptionKeyTest(unittest.TestCase):
     def test_new_key(self):
@@ -206,7 +207,7 @@ class FileEncryptorTest(unittest.TestCase):
         with open(dest_file, "rb") as tfd:
             dec_data = tfd.read()
         self.assertNotEqual(orig_data, dec_data)
-    
+
     def test_filename_too_long_for_encryption(self):
         filename = "x" * (backup.MAX_FILENAME_LENGTH + 1)
         key = EncryptionKey(password=self.password)
@@ -341,20 +342,25 @@ class DirectoryEncryptionTest(unittest.TestCase):
                 self.assertEqual(
                     source_data, decrypted_data, "Decrypted data does not match source"
                 )
+
     def test_structures_larger_than_max_path_limits(self):
         source_dir = tempfile.mkdtemp(dir=self.root, prefix="source-")
         dest_dir = tempfile.mkdtemp(dir=self.root, prefix="encrypted-")
         dec_dir = tempfile.mkdtemp(dir=self.root, prefix="decrypted-")
         current_path_length = len(source_dir)
-        dir_name_size = backup.MAX_UNENCRYPTED_FILENAME_LENGTH # length of directory name
+        dir_name_size = (
+            backup.MAX_UNENCRYPTED_FILENAME_LENGTH
+        )  # length of directory name
         # long enough but not too much for os.makedirs
-        depth = int((backup.MAX_PATH_LENGTH - current_path_length) / dir_name_size) -1
-        dirtree = "/".join([ str(_)+"x"*(dir_name_size - len(str(_))) for  _ in range(depth)])
+        depth = int((backup.MAX_PATH_LENGTH - current_path_length) / dir_name_size) - 1
+        dirtree = "/".join(
+            [str(_) + "x" * (dir_name_size - len(str(_))) for _ in range(depth)]
+        )
         last_dir = os.path.join(source_dir, dirtree)
         os.makedirs(last_dir)
         filename = "f" * backup.MAX_UNENCRYPTED_FILENAME_LENGTH
         os.chdir(last_dir)
-        os.makedirs(dirtree) # double the "long enough", so it's definitely too much :)
+        os.makedirs(dirtree)  # double the "long enough", so it's definitely too much :)
         os.chdir(dirtree)
         log.debug(f"Current dir length: {len(os.getcwd())}")
         with open(filename, "wb") as tfd:
@@ -372,8 +378,16 @@ class DirectoryEncryptionTest(unittest.TestCase):
                 decrypted_root, decrypted_dirs, decrypted_files = next(decrypted_walker)
             except StopIteration:
                 break
-            self.assertEqual(len(source_files), len(decrypted_files), "Number of files in source and decrypted directory does not match")
-            self.assertEqual(len(source_dirs), len(decrypted_dirs), "Number of directories in source and decrypted directory does not match")
+            self.assertEqual(
+                len(source_files),
+                len(decrypted_files),
+                "Number of files in source and decrypted directory does not match",
+            )
+            self.assertEqual(
+                len(source_dirs),
+                len(decrypted_dirs),
+                "Number of directories in source and decrypted directory does not match",
+            )
             for source_file, decrypted_file in zip(source_files, decrypted_files):
                 with open(os.path.join(source_root, source_file), "rb") as tfd:
                     source_data = tfd.read()
@@ -382,6 +396,7 @@ class DirectoryEncryptionTest(unittest.TestCase):
                 self.assertEqual(
                     source_data, decrypted_data, "Decrypted data does not match source"
                 )
+
 
 class DirectoryComparisonTest(unittest.TestCase):
     def setUp(self):
@@ -393,58 +408,97 @@ class DirectoryComparisonTest(unittest.TestCase):
         os.mkdir(self.source_dir)
         os.mkdir(self.encrypted_dir)
         os.mkdir(self.decrypted_dir)
-    
+
     def tearDown(self):
         shutil.rmtree(self.root)
-    
+
     def test_compare_same_directory(self):
-        newdir="newdir"
+        """test identical dirs"""
+        newdir = "newdir"
         dir1 = FSDirectory(self.source_dir)
         dir2 = FSDirectory(self.source_dir)
-        self.assertIsNone(dir1.one_way_diff(dir2), "No difference expected on identical directories")
+        self.assertIsNone(
+            dir1.one_way_diff(dir2), "No difference expected on identical directories"
+        )
         os.mkdir(os.path.join(self.source_dir, newdir))
-        self.assertIsNone(dir1.one_way_diff(dir2), "No difference expected on identical directories")
-    
+        self.assertIsNone(
+            dir1.one_way_diff(dir2), "No difference expected on identical directories"
+        )
+
+    def test_commpare_identical_directories_encrypted(self):
+        """test identical encrypted dirs"""
+        password = "test"
+        os.mkdir(os.path.join(self.source_dir, "newdir"))
+        with open(os.path.join(self.source_dir, "file"), "wb") as tfd:
+            tfd.write(b"test")
+        with open(os.path.join(self.source_dir, "newdir", "file2"), "wb") as tfd:
+            tfd.write(b"test2")
+        backup.encrypt_directory(self.source_dir, self.encrypted_dir, password=password)
+        dir1 = FSDirectory.from_filesystem(self.encrypted_dir)
+        dir2 = FSDirectory.from_filesystem(self.encrypted_dir)
+        self.assertIsNone(
+            dir1.one_way_diff(dir2),
+            "No difference expected on identical encrypted directories",
+        )
+
     def test_extra_source_directory(self):
+        """test extra directory in target"""
         new_dir = "new_dir"
         os.mkdir(os.path.join(self.encrypted_dir, new_dir))
         dir1 = FSDirectory.from_filesystem(self.source_dir)
         dir2 = FSDirectory.from_filesystem(self.encrypted_dir)
-        self.assertIsNotNone(dir1.one_way_diff(dir2), "Difference expected on different directories")
+        self.assertIsNotNone(
+            dir1.one_way_diff(dir2), "Difference expected on different directories"
+        )
         # the same again just to make sure we did not change the original
-        self.assertIsNotNone(dir1.one_way_diff(dir2), "Difference expected on different directories on repeated comparison")
+        self.assertIsNotNone(
+            dir1.one_way_diff(dir2),
+            "Difference expected on different directories on repeated comparison",
+        )
         diff = dir1.one_way_diff(dir2)
         self.assertIn(new_dir, diff.dir_names(), "New directory expected in diff")
 
     def test_extra_nested_directory(self):
+        """test extra directory (nested in existing dir) in target"""
         new_dir = "new_dir"
         os.mkdir(os.path.join(self.encrypted_dir, new_dir))
         new_dir2 = "new_dir2"
         os.mkdir(os.path.join(self.encrypted_dir, new_dir, new_dir2))
         dir1 = FSDirectory.from_filesystem(self.source_dir)
         dir2 = FSDirectory.from_filesystem(self.encrypted_dir)
-        self.assertIsNotNone(dir1.one_way_diff(dir2), "Difference expected on different directories")
+        self.assertIsNotNone(
+            dir1.one_way_diff(dir2), "Difference expected on different directories"
+        )
         diff = dir1.one_way_diff(dir2)
         level1_dirs = diff.dir_names()
         self.assertIn(new_dir, level1_dirs, f"{new_dir} expected in level-1 diff")
-        self.assertNotIn(new_dir2, level1_dirs, f"{new_dir2} not expected in level-1 diff")
+        self.assertNotIn(
+            new_dir2, level1_dirs, f"{new_dir2} not expected in level-1 diff"
+        )
         level2_dirs = diff.get_directory(new_dir).dir_names()
         self.assertIn(new_dir2, level2_dirs, f"{new_dir2} expected in level-2 diff")
-        self.assertNotIn(new_dir, level2_dirs, f"{new_dir} not expected in level-2 diff")
-    
+        self.assertNotIn(
+            new_dir, level2_dirs, f"{new_dir} not expected in level-2 diff"
+        )
+
     def test_extra_file(self):
+        """test extra file in target"""
         new_file = "new_file"
         with open(os.path.join(self.encrypted_dir, new_file), "w") as tfd:
             tfd.write("test")
         dir1 = FSDirectory.from_filesystem(self.source_dir)
         dir2 = FSDirectory.from_filesystem(self.encrypted_dir)
-        self.assertIsNotNone(dir1.one_way_diff(dir2), "Difference expected on different directories")
+        self.assertIsNotNone(
+            dir1.one_way_diff(dir2), "Difference expected on different directories"
+        )
         diff = dir1.one_way_diff(dir2)
         self.assertIn(new_file, diff.file_names(), f"{new_file} expected in diff")
-        self.assertEqual(len(diff.directories), 0, "No new directories expected in diff")
+        self.assertEqual(
+            len(diff.directories), 0, "No new directories expected in diff"
+        )
 
-    
     def test_extra_file_in_nested_directory(self):
+        """test extra file in nested directory in target"""
         new_dir = "new_dir"
         os.mkdir(os.path.join(self.encrypted_dir, new_dir))
         os.mkdir(os.path.join(self.source_dir, new_dir))
@@ -453,15 +507,26 @@ class DirectoryComparisonTest(unittest.TestCase):
             tfd.write("test")
         dir1 = FSDirectory.from_filesystem(self.source_dir)
         dir2 = FSDirectory.from_filesystem(self.encrypted_dir)
-        self.assertIsNotNone(dir1.one_way_diff(dir2), "Difference expected on different directories")
+        self.assertIsNotNone(
+            dir1.one_way_diff(dir2), "Difference expected on different directories"
+        )
         diff = dir1.one_way_diff(dir2)
-        self.assertEqual(len(diff.directories), 1, "Exactly one new directory expected in diff")
+        self.assertEqual(
+            len(diff.directories), 1, "Exactly one new directory expected in diff"
+        )
         level1_files = diff.file_names()
-        self.assertNotIn(new_file, level1_files, f"{new_file} not expected in level-1 diff")
+        self.assertNotIn(
+            new_file, level1_files, f"{new_file} not expected in level-1 diff"
+        )
         level2_files = diff.get_directory(new_dir).file_names()
-        self.assertIn(new_file, level2_files, f"{new_file} expected in level-2 diff. Diff: {diff.dump()}")
-    
+        self.assertIn(
+            new_file,
+            level2_files,
+            f"{new_file} expected in level-2 diff. Diff: {diff.dump()}",
+        )
+
     def test_same_content_in_different_dirs(self):
+        """test same content (more files) in different dirs"""
         dir1 = "dir1"
         os.mkdir(os.path.join(self.source_dir, dir1))
         os.mkdir(os.path.join(self.encrypted_dir, dir1))
@@ -476,17 +541,79 @@ class DirectoryComparisonTest(unittest.TestCase):
         dir1 = FSDirectory.from_filesystem(self.source_dir)
         dir2 = FSDirectory.from_filesystem(self.encrypted_dir)
         diff = dir1.one_way_diff(dir2)
-        self.assertIsNone(dir1.one_way_diff(dir2), "No difference expected on identical directories")
+        self.assertIsNone(
+            dir1.one_way_diff(dir2), "No difference expected on identical directories"
+        )
 
     def test_two_extra_empty_directories(self):
+        """test two extra empty directories in target"""
         dir1 = "dir1"
         dir2 = "dir2"
         os.mkdir(os.path.join(self.encrypted_dir, dir1))
         os.mkdir(os.path.join(self.encrypted_dir, dir2))
         dir1 = FSDirectory.from_filesystem(self.source_dir)
         dir2 = FSDirectory.from_filesystem(self.encrypted_dir)
-        self.assertIsNotNone(dir1.one_way_diff(dir2), "Difference expected on different directories")
-        self.assertEqual(len(dir1.one_way_diff(dir2).directories), 2, "Two new directories expected in diff")
+        self.assertIsNotNone(
+            dir1.one_way_diff(dir2), "Difference expected on different directories"
+        )
+        self.assertEqual(
+            len(dir1.one_way_diff(dir2).directories),
+            2,
+            "Two new directories expected in diff",
+        )
+
+    def test_encrypt_and_compare(self):
+        """encrypts a directory and runs a diff on it"""
+        password = "test"
+        dir1 = FSDirectory.from_filesystem(self.source_dir)
+        backup.encrypt_directory(self.source_dir, self.encrypted_dir, password)
+        dir2 = FSDirectory.from_filesystem(self.encrypted_dir)
+        diff = dir1.one_way_diff(dir2)
+        self.assertIsNone(diff, "No difference expected on identical directories")
+
+    def test_sub_operator(self):
+        """test sub operator"""
+        os.mkdir(os.path.join(self.encrypted_dir, "dir1"))
+        dir1 = FSDirectory.from_filesystem(self.source_dir)
+        dir2 = FSDirectory.from_filesystem(self.encrypted_dir)
+        diff = dir2 - dir1
+        self.assertIsNotNone(diff, "Difference expected on different directories")
+        diff2 = dir1.one_way_diff(dir2)
+        self.assertIsNotNone(diff2, "Difference expected on different directories")
+        self.assertIn("dir1", diff.dir_names(), "dir1 expected in diff")
+        self.assertIn("dir1", diff2.dir_names(), "dir1 expected in diff2")
+
+    def test_eq_operator(self):
+        """test eq operator"""
+        dir1 = FSDirectory.from_filesystem(self.source_dir)
+        dir2 = FSDirectory.from_filesystem(self.encrypted_dir)
+        self.assertEqual(dir1, dir2, "Directories should be equal")
+        # extra dir in target
+        os.mkdir(os.path.join(self.encrypted_dir, "newdir"))
+        dir1 = FSDirectory.from_filesystem(self.source_dir)
+        dir2 = FSDirectory.from_filesystem(self.encrypted_dir)
+        self.assertNotEqual(dir1, dir2, "Directories should not be equal")
+        os.rmdir(os.path.join(self.encrypted_dir, "newdir"))
+        # extra dir in source
+        os.mkdir(os.path.join(self.source_dir, "newdir"))
+        dir1 = FSDirectory.from_filesystem(self.source_dir)
+        dir2 = FSDirectory.from_filesystem(self.encrypted_dir)
+        self.assertNotEqual(dir1, dir2, "Directories should not be equal")
+        os.rmdir(os.path.join(self.source_dir, "newdir"))
+        # extra file in target
+        with open(os.path.join(self.encrypted_dir, "newfile"), "w") as tfd:
+            tfd.write("test")
+        dir1 = FSDirectory.from_filesystem(self.source_dir)
+        dir2 = FSDirectory.from_filesystem(self.encrypted_dir)
+        self.assertNotEqual(dir1, dir2, "Directories should not be equal")
+        os.remove(os.path.join(self.encrypted_dir, "newfile"))
+        # extra file in source
+        with open(os.path.join(self.source_dir, "newfile"), "w") as tfd:
+            tfd.write("test")
+        dir1 = FSDirectory.from_filesystem(self.source_dir)
+        dir2 = FSDirectory.from_filesystem(self.encrypted_dir)
+        self.assertNotEqual(dir1, dir2, "Directories should not be equal")
+        os.remove(os.path.join(self.source_dir, "newfile"))
 
 
 class FSDirectoryTest(unittest.TestCase):
@@ -494,11 +621,13 @@ class FSDirectoryTest(unittest.TestCase):
         dir1 = FSDirectory(name="root")
         with self.assertRaises(TypeError):
             dir1.add_directory("dir1")
-    
+
     def test_duplicit_dir_add(self):
         dir1 = FSDirectory(name="root")
         dir1.add_directory(FSDirectory("dir1"))
-        with self.assertRaises(ValueError, msg="Adding already existing name should raise ValueError"):
+        with self.assertRaises(
+            ValueError, msg="Adding already existing name should raise ValueError"
+        ):
             dir1.add_directory(FSDirectory("dir1"))
 
     def test_add_str_instead_of_file(self):
@@ -509,24 +638,27 @@ class FSDirectoryTest(unittest.TestCase):
     def test_add_duplicit_file(self):
         dir1 = FSDirectory(name="root")
         dir1.add_file(FSFile("file1"))
-        with self.assertRaises(ValueError, msg="Adding already existing name should raise ValueError"):
+        with self.assertRaises(
+            ValueError, msg="Adding already existing name should raise ValueError"
+        ):
             dir1.add_file(FSFile("file1"))
 
     def test_add_file_with_same_name_as_dir(self):
         dir1 = FSDirectory(name="root")
         dir1.add_directory(FSDirectory("dir1"))
-        with self.assertRaises(ValueError, msg="Adding already existing name should raise ValueError"):
+        with self.assertRaises(
+            ValueError, msg="Adding already existing name should raise ValueError"
+        ):
             dir1.add_file(FSFile("dir1"))
-    
+
     def test_add_dir_with_same_name_as_file(self):
         dir1 = FSDirectory(name="root")
         dir1.add_file(FSFile("file1"))
-        with self.assertRaises(ValueError, msg="Adding already existing name should raise ValueError"):
+        with self.assertRaises(
+            ValueError, msg="Adding already existing name should raise ValueError"
+        ):
             dir1.add_directory(FSDirectory("file1"))
 
 
 if __name__ == "__main__":
-    # execute only FSDirectoryTest if called directly
-    unittest.main(defaultTest="FSDirectoryTest")
-
-    
+    unittest.main()

@@ -43,37 +43,46 @@ _KEYSTORE = {}  # cached keys for detected salts
 
 class FSFile:
     """File system file"""
+
     def __init__(self, name: str):
         self.name = name
         self.is_encrypted = is_encrypted(self.name)
         if self.is_encrypted:
             self.decrypted_name = decrypt_filename(self.name, password=get_password())
-    
+
+
 class FSDirectory:
     """File system directory"""
-    def __init__(self, name: str, root:None|str = None):
+
+    def __init__(self, name: str, root: None | str = None):
         self.name = name
         self.root = root
-        self.files = set()
-        self.directories = set()
+        self.files = []
+        self.directories = []
         self.is_encrypted = is_encrypted(self.name)
         if self.is_encrypted:
             self.decrypted_name = decrypt_filename(self.name, password=get_password())
 
     def add_directory(self, directory: Self):
         if not isinstance(directory, self.__class__):
-            raise TypeError(f"Invalid arg for directory, expected {self.__class__}, got {type(directory)}")
+            raise TypeError(
+                f"Invalid arg for directory, expected {self.__class__}, got {type(directory)}"
+            )
         if directory.name in self.dir_names() | self.file_names():
-            raise ValueError(f"Directory {directory.name} already exists in {self.name}")
-        self.directories.add(directory)
-    
+            raise ValueError(
+                f"Directory {directory.name} already exists in {self.name}"
+            )
+        self.directories.append(directory)
+
     def add_file(self, file: FSFile):
         if not isinstance(file, FSFile):
-            raise TypeError(f"Invalid arg for file, expected {FSFile}, got {type(file)}")
+            raise TypeError(
+                f"Invalid arg for file, expected {FSFile}, got {type(file)}"
+            )
         if file.name in self.file_names() | self.dir_names():
             raise ValueError(f"File {file.name} already exists in {self.name}")
-        self.files.add(file)
-    
+        self.files.append(file)
+
     def get_directory(self, name: str):
         for directory in self.directories:
             if directory.is_encrypted:
@@ -82,10 +91,10 @@ class FSDirectory:
             elif directory.name == name:
                 return directory
         raise KeyError(f"Directory {name} not found")
-    
+
     def is_empty(self):
         return len(self.files) == 0 and len(self.directories) == 0
-    
+
     def dir_names(self):
         result = set()
         for d in self.directories:
@@ -94,7 +103,7 @@ class FSDirectory:
             else:
                 result.add(d.name)
         return result
-    
+
     def file_names(self):
         result = set()
         for f in self.files:
@@ -103,22 +112,21 @@ class FSDirectory:
             else:
                 result.add(f.name)
         return result
-    
+
     def __str__(self):
         return f"FSDirectory(name={self.name}, root={self.root}, encrypted={self.is_encrypted})"
-        
 
     def pretty_print(self, indent: int = 2):
         """prints the directory structure"""
-        print(self.dump(indent=indent))    
+        print(self.dump(indent=indent))
 
-    def dump(self, indent: int=2):
+    def dump(self, indent: int = 2):
         result = ""
-        result+=f"{' ' * indent}{self.name} ({id(self)}) [root: {self.root}] {'(encrypted)' if self.is_encrypted else ''}\n"
+        result += f"{' ' * indent}{self.name} ({id(self)}) [root: {self.root}] {'(encrypted)' if self.is_encrypted else ''}\n"
         for directory in self.directories:
-            result += directory.dump(indent=indent+2)
+            result += directory.dump(indent=indent + 2)
         for file in self.files:
-            result+=f"{' ' * (indent+2)}{file.name} {'(encrypted)' if file.is_encrypted else ''}\n"
+            result += f"{' ' * (indent+2)}{file.name} {'(encrypted)' if file.is_encrypted else ''}\n"
         return result
 
     @classmethod
@@ -128,7 +136,7 @@ class FSDirectory:
             raise IOError(f"Directory {path} does not exist or is not a directory")
         with safe_cwd_cm(path):
             _, dirs, files = next(os.walk("."))
-            #log.debug(f"Content of {path}: dirs: {dirs} files: {files}")
+            # log.debug(f"Content of {path}: dirs: {dirs} files: {files}")
         name = pathlib.Path(path).name
         parent = pathlib.Path(path).parent
         directory = cls(name=name, root=parent)
@@ -138,7 +146,7 @@ class FSDirectory:
             directory.add_file(FSFile(name=fname))
         return directory
 
-    def one_way_diff(self, other: Self) -> Self|None:
+    def one_way_diff(self, other: Self) -> Self | None:
         """
         compares two directory trees
         returns a new FSDirectory with entries that are not in self
@@ -149,9 +157,13 @@ class FSDirectory:
         Returns None if the trees are identical
         """
         result = None
-        
+
         for directory in other.directories:
-            dir_name = directory.name if not directory.is_encrypted else directory.decrypted_name
+            dir_name = (
+                directory.name
+                if not directory.is_encrypted
+                else directory.decrypted_name
+            )
             if dir_name not in self.dir_names():
                 # if the directory is completely new, add the whole subtree from other
                 subtree_copy = deepcopy(directory)
@@ -168,20 +180,38 @@ class FSDirectory:
                     result.add_directory(subresult)
 
         for fname in other.file_names():
-            filename = fname if not is_encrypted(fname) else decrypt_filename(fname, password=get_password())
+            filename = (
+                fname
+                if not is_encrypted(fname)
+                else decrypt_filename(fname, password=get_password())
+            )
             if filename not in self.file_names():
                 if result is None:
                     result = self.__class__(name=self.name, root=self.root)
                 result.add_file(copy.deepcopy(FSFile(name=fname)))
-        
+
         return result
 
-    
+    def __sub__(self, other: Self):
+        """returns a new FSDirectory with entries that are not in self
+        and are in the other, including their parent elements if nested deeper.
 
-        
+        In other words returns new elements in the other.
+        """
+        if not isinstance(other, self.__class__):
+            raise TypeError(
+                f"Invalid arg for other, expected {self.__class__}, got {type(other)}"
+            )
+        return other.one_way_diff(self)
 
+    def __eq__(self, other: Self):
+        """compares two directory trees"""
+        if not isinstance(other, self.__class__):
+            raise TypeError(
+                f"Invalid arg for other, expected {self.__class__}, got {type(other)}"
+            )
+        return self.one_way_diff(other) is None and other.one_way_diff(self) is None
 
-   
 
 class EncryptionKey:
     """Encryption key with all data needed to derive it back from password"""
@@ -311,7 +341,7 @@ class FileEncryptor:
                         f.write(data)
                 except IOError as e:
                     log.error(f"Error encountered: {e}")
-                    os.unlink(filename) # no not keep partial files present on the disk
+                    os.unlink(filename)  # no not keep partial files present on the disk
                     raise
 
 
@@ -332,7 +362,10 @@ class FileDecryptor:
         filename = str(pathlib.Path(path).name)
         with safe_cwd_cm(dirname):
             self.max_read_pos = (
-                os.path.getsize(filename) - IV_SIZE_BYTES - TAG_SIZE_BYTES - SALT_SIZE_BYTES
+                os.path.getsize(filename)
+                - IV_SIZE_BYTES
+                - TAG_SIZE_BYTES
+                - SALT_SIZE_BYTES
             )
         if self.max_read_pos < 0:
             raise IOError(
@@ -483,9 +516,11 @@ def decrypt_filename(encrypted_filename: bytes, password=None) -> str:
     try:
         decoded = base64.urlsafe_b64decode(encrypted_filename)
     except Exception as ex:
-        #log.error(f"Failed to decode filename {encrypted_filename}: {ex}")
-        raise ValueError(f"Failed to decode filename {encrypted_filename}. Probably invalid (non-encrypted) filename for decryption?: {ex}")
-    
+        # log.error(f"Failed to decode filename {encrypted_filename}: {ex}")
+        raise ValueError(
+            f"Failed to decode filename {encrypted_filename}. Probably invalid (non-encrypted) filename for decryption?: {ex}"
+        )
+
     if len(decoded) < IV_SIZE_BYTES + TAG_SIZE_BYTES + SALT_SIZE_BYTES:
         raise ValueError(
             f"Invalid encrypted filename ({encrypted_filename}). Too short to get all required metadata."
@@ -511,9 +546,8 @@ def decrypt_filename(encrypted_filename: bytes, password=None) -> str:
     try:
         return _decrypt(key, iv, ciphertext, tag).decode("utf-8")
     except Exception as ex:
-        #log.debug(f"Failed to decrypt filename {encrypted_filename}: {ex}")
+        # log.debug(f"Failed to decrypt filename {encrypted_filename}: {ex}")
         raise
-
 
 
 def list_encrypted_directory(directory, password=None):
@@ -550,8 +584,6 @@ def list_encrypted_directory(directory, password=None):
             break  # fist level only
     return (encrypted_dirs, encrypted_files)
 
-
-    
 
 def safe_makedirs(dirpath: str, exist_ok: bool = False):
     """creates diretories even if the path is longer than MAX_PATH_LENGTH"""
@@ -681,7 +713,7 @@ def decrypt_directory(source, destination, password):
         raise ValueError(f"Directory {source} does not exist or is not a directory")
     with safe_cwd_cm(source):
         for root, dirs, files in os.walk("."):
-            root = source # override due to cwd context manager
+            root = source  # override due to cwd context manager
             with safe_cwd_cm(destination):
                 _, existing_dirs, existing_files = next(os.walk("."))
             log.debug(f"Source dirs in [{source}]: {dirs} Source files: {files}")
@@ -719,6 +751,7 @@ def decrypt_directory(source, destination, password):
                 )
             break  # one level in each call, the rest gets handled in the recurisve calls
 
+
 def compare_directories(source: str, destination: str, password: str):
     """compares two directories, non-recursive"""
     source_is_encrypted = False
@@ -726,24 +759,24 @@ def compare_directories(source: str, destination: str, password: str):
     if not safe_is_dir(source):
         raise IOError(f"Directory {source} does not exist or is not a directory")
     if not safe_is_dir(destination):
-        raise IOError(
-            f"Directory {destination} does not exist or is not a directory"
-        )
+        raise IOError(f"Directory {destination} does not exist or is not a directory")
     with safe_cwd_cm(source):
-        _, source_dirs, source_files = next(os.walk("."))   
+        _, source_dirs, source_files = next(os.walk("."))
         log.debug(f"Source content {source}: dirs: {source_dirs} files: {source_files}")
     with safe_cwd_cm(destination):
         encrypted_content = list_encrypted_directory(destination, password=password)
         destination_dirs = list(encrypted_content[0].keys())
         destination_files = list(encrypted_content[1].keys())
-        
-        log.debug(f"Destination content {destination}: dirs: [{destination_dirs}] files: {destination_files}")
-    
+
+        log.debug(
+            f"Destination content {destination}: dirs: [{destination_dirs}] files: {destination_files}"
+        )
+
     result = {
-        "source_new":[],
-        "source_missing":[],
-        "destination_new":[],
-        "destination_missing":[],
+        "source_new": [],
+        "source_missing": [],
+        "destination_new": [],
+        "destination_missing": [],
     }
     for dname in source_dirs:
         if dname not in destination_dirs:
@@ -760,8 +793,9 @@ def compare_directories(source: str, destination: str, password: str):
     log.debug(f"Comparison result: {result}")
     return result
 
+
 def create_fs_tree(root: str) -> FSDirectory:
-    """ creates a dictionary of the file system tree below root (recursively) """
+    """creates a dictionary of the file system tree below root (recursively)"""
     if not safe_is_dir(root):
         raise IOError(f"Directory {root} does not exist or is not a directory")
     with safe_cwd_cm(root):
@@ -777,20 +811,19 @@ def create_fs_tree(root: str) -> FSDirectory:
 
 def get_password():
     """asks for password interactively"""
-    #password = getpass.getpass(prompt="Password: ")
+    # password = getpass.getpass(prompt="Password: ")
     return "test"
 
+
 def is_encrypted(filename: str):
-    """ guess if the filename is an encrypted string"""
+    """guess if the filename is an encrypted string"""
     try:
         decrypt_filename(filename, password=get_password())
-        #log.debug(f"guessing is_encrypted({filename}) -> True")
+        # log.debug(f"guessing is_encrypted({filename}) -> True")
         return True
     except Exception:
-        #log.debug(f"guessing is_encrypted({filename}) -> False")
+        # log.debug(f"guessing is_encrypted({filename}) -> False")
         return False
-    
-        
 
 
 if __name__ == "__main__":
@@ -801,8 +834,8 @@ if __name__ == "__main__":
     # decrypt_directory(
     #     "/tmp/backup_test/encrypted", "/tmp/backup_test/decrypted", password="test"
     # )
-    
-    #compare_directories("/tmp/backup_test/source", "/tmp/backup_test/encrypted", password="test")
+
+    # compare_directories("/tmp/backup_test/source", "/tmp/backup_test/encrypted", password="test")
     # encrypt_directory(
     #     "/tmp/backup_test/source-new", "/tmp/backup_test/encrypted", password="test"
     # )
@@ -822,7 +855,6 @@ if __name__ == "__main__":
     else:
         print("Trees are identical")
 
-    
 
-#TODO: next - projit jeste diff logiku a zcela ji porozumet, abych ji mohl verit
-#TODO: pak zacit psat testy 
+# TODO: next - projit jeste diff logiku a zcela ji porozumet, abych ji mohl verit
+# TODO: pak zacit psat testy
