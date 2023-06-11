@@ -1,13 +1,13 @@
+""" Unit tests for backup tool """
 import os
-import backup
 import unittest
-from backup import EncryptionKey, FSDirectory, FSFile
 import tempfile
-import cryptography.exceptions
 import base64
 import shutil
 import logging
-import pathlib
+import cryptography.exceptions
+import backup
+from backup import EncryptionKey, FSDirectory, FSFile
 
 backup.log.setLevel(backup.logging.WARNING)
 
@@ -17,16 +17,20 @@ log.setLevel(logging.WARNING)
 
 
 # pylint: disable=logging-fstring-interpolation
-# TODO: add test for encryption of filename of length MAX_FILENAME_LENGTH to make sure we deliver
-# on our promises :)
+
+
 class EncryptionKeyTest(unittest.TestCase):
+    """Test encryption key class"""
+
     def test_new_key(self):
+        """Test creation of new key"""
         password = "test"
         key = EncryptionKey(password=password)
         self.assertEqual(len(key.key), 32)
         self.assertEqual(len(key.salt), backup.SALT_SIZE_BYTES)
 
     def test_key_from_salt(self):
+        """Test creation of key from salt"""
         password = "test"
         key = EncryptionKey(password=password)
         key2 = EncryptionKey(password=password, salt=key.salt)
@@ -35,6 +39,8 @@ class EncryptionKeyTest(unittest.TestCase):
 
 
 class FileEncryptorTest(unittest.TestCase):
+    """Test file encryption"""
+
     def setUp(self):
         self.test_dir = tempfile.mkdtemp(prefix="backup_test_")
         self.test_file = self.get_temp_file()
@@ -44,6 +50,8 @@ class FileEncryptorTest(unittest.TestCase):
         self.password = "test"
 
     def get_temp_file(self, prefix=""):
+        """Get a temporary file path"""
+        # pylint: disable=invalid-name
         fd, path = tempfile.mkstemp(dir=self.test_dir, prefix=prefix)
         os.close(fd)
         return path
@@ -52,6 +60,7 @@ class FileEncryptorTest(unittest.TestCase):
         shutil.rmtree(self.test_dir)
 
     def test_encrypt_file(self):
+        """Test encryption of file"""
         key = EncryptionKey(password=self.password)
         # encrypt buffered
         encryptor = backup.FileEncryptor(path=self.test_file, key=key)
@@ -72,6 +81,7 @@ class FileEncryptorTest(unittest.TestCase):
         self.assertEqual(len(encrypted_data), len(encrypted_data_unbuf))
 
     def test_decrypt_file(self):
+        """Test decryption of file"""
         key = EncryptionKey(password=self.password)
         enc_buf = backup.FileEncryptor(path=self.test_file, key=key)
         enc_buf_file = self.get_temp_file()
@@ -115,6 +125,7 @@ class FileEncryptorTest(unittest.TestCase):
         )
 
     def test_encrypt_to_file(self):
+        """Test encryption of file to file"""
         key = EncryptionKey(password=self.password)
         enc_file = self.get_temp_file()
         enc = backup.FileEncryptor(path=self.test_file, key=key)
@@ -129,6 +140,7 @@ class FileEncryptorTest(unittest.TestCase):
         )
 
     def test_invalid_data_decryption(self):
+        """Test decryption of invalid data"""
         key = EncryptionKey(password=self.password)
         enc_file = self.get_temp_file()
         enc = backup.FileEncryptor(path=self.test_file, key=key)
@@ -156,6 +168,7 @@ class FileEncryptorTest(unittest.TestCase):
         dec.close()
 
     def test_plaintext_not_in_encrypted_data(self):
+        """Test that the plaintext is not in the encrypted data"""
         key = EncryptionKey(password=self.password)
         encryptor = backup.FileEncryptor(path=self.test_file, key=key)
         encrypted_data = encryptor.read()
@@ -164,12 +177,13 @@ class FileEncryptorTest(unittest.TestCase):
         self.assertNotIn(self.test_data[:20], encrypted_data)
 
     def test_decrypt_empty_file(self):
-        key = EncryptionKey(password=self.password)
+        """Test decryption of empty file"""
         enc_file = self.get_temp_file()
         with self.assertRaises(IOError):
             backup.FileDecryptor(path=enc_file, password=self.password)
 
     def test_encrypt_existing_file_overwrite(self):
+        """Test encryption of existing file with overwrite flag"""
         key = EncryptionKey(password=self.password)
         orig_data = b"original data"
         enc_file = self.get_temp_file()
@@ -188,6 +202,7 @@ class FileEncryptorTest(unittest.TestCase):
         self.assertNotEqual(orig_data, enc_data)
 
     def test_decrypt_existing_file_overwrite(self):
+        """Test decryption of existing file with overwrite flag"""
         key = EncryptionKey(password=self.password)
         enc_file = self.get_temp_file()
         enc = backup.FileEncryptor(path=self.test_file, key=key)
@@ -209,6 +224,7 @@ class FileEncryptorTest(unittest.TestCase):
         self.assertNotEqual(orig_data, dec_data)
 
     def test_filename_too_long_for_encryption(self):
+        """Test that a filename that is too long for encryption raises an error"""
         filename = "x" * (backup.MAX_FILENAME_LENGTH + 1)
         key = EncryptionKey(password=self.password)
         with self.assertRaises(ValueError):
@@ -216,7 +232,10 @@ class FileEncryptorTest(unittest.TestCase):
 
 
 class FileNameEncryptionTest(unittest.TestCase):
+    """Test encryption of filenames"""
+
     def test_encrypt_filename(self):
+        """Test encryption of filename"""
         password = "test"
         key = EncryptionKey(password=password)
         filename = "test.txt"
@@ -227,6 +246,7 @@ class FileNameEncryptionTest(unittest.TestCase):
         )
 
     def test_decrypt_corrupted_filename(self):
+        """Test decryption of corrupted filename"""
         password = "test"
         key = EncryptionKey(password=password)
         filename = "test.txt"
@@ -239,18 +259,29 @@ class FileNameEncryptionTest(unittest.TestCase):
             backup.decrypt_filename(encrypted_name, password=password)
 
     def test_decrypt_too_short(self):
+        """Test decryption of too short filename"""
         filename = b"test"
         invalid_crypto_data = base64.urlsafe_b64encode(filename)
         with self.assertRaises(ValueError):
             backup.decrypt_filename(invalid_crypto_data, password="test")
 
     def test_filename_too_long(self):
+        """Test that a filename that is too long for encryption raises an error"""
         filename = "x" * (backup.MAX_UNENCRYPTED_FILENAME_LENGTH + 1)
         with self.assertRaises(ValueError):
             backup.encrypt_filename(EncryptionKey(password="test"), filename)
 
+    def test_filename_at_max_length(self):
+        """Test that a filename at the max length is encrypted"""
+        filename = "x" * backup.MAX_UNENCRYPTED_FILENAME_LENGTH
+        encrypted = backup.encrypt_filename(EncryptionKey(password="test"), filename)
+        self.assertNotEqual(filename, encrypted)
+        self.assertEqual(filename, backup.decrypt_filename(encrypted, password="test"))
+
 
 class DirectoryEncryptionTest(unittest.TestCase):
+    """Test encryption of directories"""
+
     def setUp(self):
         self.root = tempfile.mkdtemp(prefix="backup-test-")
         self.source_dir = os.path.join(self.root, "source")
@@ -265,9 +296,10 @@ class DirectoryEncryptionTest(unittest.TestCase):
         shutil.rmtree(self.root)
 
     def create_fs_tree(self, root, depth=2, files_per_dir=3, dirs_per_dir=2):
+        """Create a directory tree for testing"""
         for i in range(files_per_dir):
             fname = os.path.join(root, f"file-{depth}-{i}")
-            with open(fname, "w") as tfd:
+            with open(fname, "w", encoding="utf-8") as tfd:
                 tfd.write(fname)
         for i in range(dirs_per_dir):
             dname = os.path.join(root, f"dir-{depth}-{i}")
@@ -281,6 +313,7 @@ class DirectoryEncryptionTest(unittest.TestCase):
                 )
 
     def test_encrypt_empty_directory(self):
+        """Test encryption of empty directory"""
         backup.encrypt_directory(
             self.source_dir, self.encrypted_dir, password=self.password
         )
@@ -289,11 +322,11 @@ class DirectoryEncryptionTest(unittest.TestCase):
         self.assertEqual(files, [])
 
     def test_encrypt_directory(self):
+        """Test encryption of directory"""
         self.create_fs_tree(self.source_dir)
         backup.encrypt_directory(
             self.source_dir, self.encrypted_dir, password=self.password
         )
-        _, dirs, files = next(os.walk(self.encrypted_dir))
         # check that number of files on each level is the same
         # and that the content is not the same (i.e. encrypted)
         source_walker = os.walk(self.source_dir)
@@ -344,6 +377,10 @@ class DirectoryEncryptionTest(unittest.TestCase):
                 )
 
     def test_structures_larger_than_max_path_limits(self):
+        """
+        Test that structures larger than the maximum
+        path length are handled correctly
+        """
         source_dir = tempfile.mkdtemp(dir=self.root, prefix="source-")
         dest_dir = tempfile.mkdtemp(dir=self.root, prefix="encrypted-")
         dec_dir = tempfile.mkdtemp(dir=self.root, prefix="decrypted-")
@@ -399,6 +436,8 @@ class DirectoryEncryptionTest(unittest.TestCase):
 
 
 class DirectoryComparisonTest(unittest.TestCase):
+    """Test directory comparison"""
+
     def setUp(self):
         self.root = tempfile.mkdtemp(prefix="backup-test-")
         self.source_dir = os.path.join(self.root, "source")
@@ -484,7 +523,9 @@ class DirectoryComparisonTest(unittest.TestCase):
     def test_extra_file(self):
         """test extra file in target"""
         new_file = "new_file"
-        with open(os.path.join(self.encrypted_dir, new_file), "w") as tfd:
+        with open(
+            os.path.join(self.encrypted_dir, new_file), "w", encoding="utf-8"
+        ) as tfd:
             tfd.write("test")
         dir1 = FSDirectory.from_filesystem(self.source_dir)
         dir2 = FSDirectory.from_filesystem(self.encrypted_dir)
@@ -503,7 +544,9 @@ class DirectoryComparisonTest(unittest.TestCase):
         os.mkdir(os.path.join(self.encrypted_dir, new_dir))
         os.mkdir(os.path.join(self.source_dir, new_dir))
         new_file = "new_file"
-        with open(os.path.join(self.encrypted_dir, new_dir, new_file), "w") as tfd:
+        with open(
+            os.path.join(self.encrypted_dir, new_dir, new_file), "w", encoding="utf-8"
+        ) as tfd:
             tfd.write("test")
         dir1 = FSDirectory.from_filesystem(self.source_dir)
         dir2 = FSDirectory.from_filesystem(self.encrypted_dir)
@@ -530,17 +573,24 @@ class DirectoryComparisonTest(unittest.TestCase):
         dir1 = "dir1"
         os.mkdir(os.path.join(self.source_dir, dir1))
         os.mkdir(os.path.join(self.encrypted_dir, dir1))
-        with open(os.path.join(self.source_dir, dir1, "file1"), "w") as tfd:
+        with open(
+            os.path.join(self.source_dir, dir1, "file1"), "w", encoding="utf-8"
+        ) as tfd:
             tfd.write("test")
-        with open(os.path.join(self.encrypted_dir, dir1, "file1"), "w") as tfd:
+        with open(
+            os.path.join(self.encrypted_dir, dir1, "file1"), "w", encoding="utf-8"
+        ) as tfd:
             tfd.write("test")
-        with open(os.path.join(self.source_dir, "rootfile1"), "w") as tfd:
+        with open(
+            os.path.join(self.source_dir, "rootfile1"), "w", encoding="utf-8"
+        ) as tfd:
             tfd.write("test")
-        with open(os.path.join(self.encrypted_dir, "rootfile1"), "w") as tfd:
+        with open(
+            os.path.join(self.encrypted_dir, "rootfile1"), "w", encoding="utf-8"
+        ) as tfd:
             tfd.write("test")
         dir1 = FSDirectory.from_filesystem(self.source_dir)
         dir2 = FSDirectory.from_filesystem(self.encrypted_dir)
-        diff = dir1.one_way_diff(dir2)
         self.assertIsNone(
             dir1.one_way_diff(dir2), "No difference expected on identical directories"
         )
@@ -601,14 +651,18 @@ class DirectoryComparisonTest(unittest.TestCase):
         self.assertNotEqual(dir1, dir2, "Directories should not be equal")
         os.rmdir(os.path.join(self.source_dir, "newdir"))
         # extra file in target
-        with open(os.path.join(self.encrypted_dir, "newfile"), "w") as tfd:
+        with open(
+            os.path.join(self.encrypted_dir, "newfile"), "w", encoding="utf-8"
+        ) as tfd:
             tfd.write("test")
         dir1 = FSDirectory.from_filesystem(self.source_dir)
         dir2 = FSDirectory.from_filesystem(self.encrypted_dir)
         self.assertNotEqual(dir1, dir2, "Directories should not be equal")
         os.remove(os.path.join(self.encrypted_dir, "newfile"))
         # extra file in source
-        with open(os.path.join(self.source_dir, "newfile"), "w") as tfd:
+        with open(
+            os.path.join(self.source_dir, "newfile"), "w", encoding="utf-8"
+        ) as tfd:
             tfd.write("test")
         dir1 = FSDirectory.from_filesystem(self.source_dir)
         dir2 = FSDirectory.from_filesystem(self.encrypted_dir)
@@ -617,12 +671,16 @@ class DirectoryComparisonTest(unittest.TestCase):
 
 
 class FSDirectoryTest(unittest.TestCase):
+    """Tests for FSDirectory class"""
+
     def test_add_str_instead_of_dir(self):
+        """test adding string instead of FSDirectory object"""
         dir1 = FSDirectory(name="root")
         with self.assertRaises(TypeError):
             dir1.add_directory("dir1")
 
     def test_duplicit_dir_add(self):
+        """test adding directory with same name as existing one"""
         dir1 = FSDirectory(name="root")
         dir1.add_directory(FSDirectory("dir1"))
         with self.assertRaises(
@@ -631,11 +689,13 @@ class FSDirectoryTest(unittest.TestCase):
             dir1.add_directory(FSDirectory("dir1"))
 
     def test_add_str_instead_of_file(self):
+        """test adding string instead of FSFile object"""
         dir1 = FSDirectory(name="root")
         with self.assertRaises(TypeError):
             dir1.add_file("file1")
 
     def test_add_duplicit_file(self):
+        """test adding file with same name as existing one"""
         dir1 = FSDirectory(name="root")
         dir1.add_file(FSFile("file1"))
         with self.assertRaises(
@@ -644,6 +704,7 @@ class FSDirectoryTest(unittest.TestCase):
             dir1.add_file(FSFile("file1"))
 
     def test_add_file_with_same_name_as_dir(self):
+        """test adding file with same name as existing directory"""
         dir1 = FSDirectory(name="root")
         dir1.add_directory(FSDirectory("dir1"))
         with self.assertRaises(
@@ -652,6 +713,7 @@ class FSDirectoryTest(unittest.TestCase):
             dir1.add_file(FSFile("dir1"))
 
     def test_add_dir_with_same_name_as_file(self):
+        """test adding directory with same name as existing file"""
         dir1 = FSDirectory(name="root")
         dir1.add_file(FSFile("file1"))
         with self.assertRaises(

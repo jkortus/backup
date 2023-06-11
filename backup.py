@@ -64,6 +64,7 @@ class FSDirectory:
             self.decrypted_name = decrypt_filename(self.name, password=get_password())
 
     def add_directory(self, directory: Self):
+        """adds a directory (FSDirectory) to the directory tree"""
         if not isinstance(directory, self.__class__):
             raise TypeError(
                 f"Invalid arg for directory, expected {self.__class__}, got {type(directory)}"
@@ -75,6 +76,7 @@ class FSDirectory:
         self.directories.append(directory)
 
     def add_file(self, file: FSFile):
+        """adds a file (FSFile) to the directory tree"""
         if not isinstance(file, FSFile):
             raise TypeError(
                 f"Invalid arg for file, expected {FSFile}, got {type(file)}"
@@ -84,6 +86,11 @@ class FSDirectory:
         self.files.append(file)
 
     def get_directory(self, name: str):
+        """
+        returns a directory object (FSDirectory) by name
+        raises KeyError if not found
+        If the directory is encrypted, the decrypted name is used.
+        """
         for directory in self.directories:
             if directory.is_encrypted:
                 if directory.decrypted_name == name:
@@ -93,10 +100,13 @@ class FSDirectory:
         raise KeyError(f"Directory {name} not found")
 
     def is_empty(self):
+        """returns True if the directory is empty (has no subdirs and no files)"""
         return len(self.files) == 0 and len(self.directories) == 0
 
-    def dir_names(self):
+    def dir_names(self) -> set[str]:
+        """returns a set of directory names"""
         result = set()
+        # pylint: disable=invalid-name
         for d in self.directories:
             if d.is_encrypted:
                 result.add(d.decrypted_name)
@@ -104,8 +114,10 @@ class FSDirectory:
                 result.add(d.name)
         return result
 
-    def file_names(self):
+    def file_names(self) -> set[str]:
+        """returns a set of file names"""
         result = set()
+        # pylint: disable=invalid-name
         for f in self.files:
             if f.is_encrypted:
                 result.add(f.decrypted_name)
@@ -120,17 +132,24 @@ class FSDirectory:
         """prints the directory structure"""
         print(self.dump(indent=indent))
 
-    def dump(self, indent: int = 2):
+    def dump(self, indent: int = 2) -> str:
+        """returns a string representation of the directory structure"""
         result = ""
-        result += f"{' ' * indent}{self.name} ({id(self)}) [root: {self.root}] {'(encrypted)' if self.is_encrypted else ''}\n"
+        result += (
+            f"{' ' * indent}{self.name} ({id(self)}) [root: {self.root}] "
+            f"{'(encrypted)' if self.is_encrypted else ''}\n"
+        )
         for directory in self.directories:
             result += directory.dump(indent=indent + 2)
         for file in self.files:
-            result += f"{' ' * (indent+2)}{file.name} {'(encrypted)' if file.is_encrypted else ''}\n"
+            result += (
+                f"{' ' * (indent+2)}{file.name} "
+                f"{'(encrypted)' if file.is_encrypted else ''}\n"
+            )
         return result
 
     @classmethod
-    def from_filesystem(cls, path: str):
+    def from_filesystem(cls, path: str) -> Self:
         """creates a directory tree from the file system"""
         if not safe_is_dir(path):
             raise IOError(f"Directory {path} does not exist or is not a directory")
@@ -494,7 +513,8 @@ def encrypt_filename(key: EncryptionKey, plaintext: str) -> bytes:
     # pylint: disable=invalid-name
     if len(plaintext) > MAX_UNENCRYPTED_FILENAME_LENGTH:
         raise ValueError(
-            f"Filename {plaintext} is too long ({len(plaintext)}). Max length is {MAX_UNENCRYPTED_FILENAME_LENGTH}."
+            f"Filename {plaintext} is too long ({len(plaintext)}). "
+            f"Max length is {MAX_UNENCRYPTED_FILENAME_LENGTH}."
         )
     iv, ciphertext, tag = _encrypt(key, plaintext.encode("utf-8"))
     result = base64.urlsafe_b64encode(iv + tag + key.salt + ciphertext)
@@ -518,12 +538,14 @@ def decrypt_filename(encrypted_filename: bytes, password=None) -> str:
     except Exception as ex:
         # log.error(f"Failed to decode filename {encrypted_filename}: {ex}")
         raise ValueError(
-            f"Failed to decode filename {encrypted_filename}. Probably invalid (non-encrypted) filename for decryption?: {ex}"
-        )
+            f"Failed to decode filename {encrypted_filename}. "
+            f"Probably invalid (non-encrypted) filename for decryption?: {ex}"
+        ) from ex
 
     if len(decoded) < IV_SIZE_BYTES + TAG_SIZE_BYTES + SALT_SIZE_BYTES:
         raise ValueError(
-            f"Invalid encrypted filename ({encrypted_filename}). Too short to get all required metadata."
+            f"Invalid encrypted filename ({encrypted_filename}). "
+            "Too short to get all required metadata."
         )
     iv = decoded[:IV_SIZE_BYTES]
     tag = decoded[IV_SIZE_BYTES : IV_SIZE_BYTES + TAG_SIZE_BYTES]
@@ -546,7 +568,7 @@ def decrypt_filename(encrypted_filename: bytes, password=None) -> str:
     try:
         return _decrypt(key, iv, ciphertext, tag).decode("utf-8")
     except Exception as ex:
-        # log.debug(f"Failed to decrypt filename {encrypted_filename}: {ex}")
+        log.debug(f"Failed to decrypt filename {encrypted_filename}: {ex}")
         raise
 
 
@@ -571,14 +593,18 @@ def list_encrypted_directory(directory, password=None):
                 decrypted_name = decrypt_filename(dname, password=password)
                 if decrypted_name in encrypted_dirs:
                     log.error(
-                        f"Duplicate directory name {decrypted_name} -> {dname} in {root}. Probably identical file encrypted with multiple keys."
+                        f"Duplicate directory name {decrypted_name} -> {dname} "
+                        f"in {root}. Probably identical file encrypted with "
+                        "multiple keys."
                     )
                 encrypted_dirs[decrypted_name] = dname
             for fname in files:
                 decrypted_name = decrypt_filename(fname, password=password)
                 if decrypted_name in encrypted_files:
                     log.error(
-                        f"Duplicate file name {decrypted_name} -> {fname} in {root}. Probably identical file encrypted with multiple keys."
+                        f"Duplicate file name {decrypted_name} -> {fname} in "
+                        f"{root}. Probably identical file encrypted with "
+                        "multiple keys."
                     )
                 encrypted_files[decrypted_name] = fname
             break  # fist level only
@@ -633,7 +659,8 @@ def encrypt_directory(source, destination, password):
             )
             log.debug(f"Source dirs in [{source}]: {dirs} Source files: {files}")
             log.debug(
-                f"Existing encrypted dirs in [{destination}]: {existing_dirs} Existing files: {existing_files}"
+                f"Existing encrypted dirs in [{destination}]: {existing_dirs} "
+                f"Existing files: {existing_files}"
             )
 
             for fname in files:
@@ -679,7 +706,8 @@ def safe_cwd(directory: str):
             os.chdir(segment)
         if not os.getcwd() == directory:
             raise RuntimeError(
-                f"Failed to change to directory {directory}, cwd is {os.getcwd()}, segments: {segments}"
+                f"Failed to change to directory {directory}, cwd is "
+                f"{os.getcwd()}, segments: {segments}"
             )
     else:
         os.chdir(directory)
@@ -718,7 +746,8 @@ def decrypt_directory(source, destination, password):
                 _, existing_dirs, existing_files = next(os.walk("."))
             log.debug(f"Source dirs in [{source}]: {dirs} Source files: {files}")
             log.debug(
-                f"Existing decrypted dirs in [{destination}]: {existing_dirs} Existing files: {existing_files}"
+                f"Existing decrypted dirs in [{destination}]: {existing_dirs} "
+                f"Existing files: {existing_files}"
             )
             for fname in files:
                 decrypted_filename = decrypt_filename(fname, password=password)
@@ -754,8 +783,6 @@ def decrypt_directory(source, destination, password):
 
 def compare_directories(source: str, destination: str, password: str):
     """compares two directories, non-recursive"""
-    source_is_encrypted = False
-    destination_is_encrypted = True
     if not safe_is_dir(source):
         raise IOError(f"Directory {source} does not exist or is not a directory")
     if not safe_is_dir(destination):
@@ -769,7 +796,8 @@ def compare_directories(source: str, destination: str, password: str):
         destination_files = list(encrypted_content[1].keys())
 
         log.debug(
-            f"Destination content {destination}: dirs: [{destination_dirs}] files: {destination_files}"
+            f"Destination content {destination}: dirs: [{destination_dirs}] "
+            f"files: {destination_files}"
         )
 
     result = {
@@ -817,6 +845,7 @@ def get_password():
 
 def is_encrypted(filename: str):
     """guess if the filename is an encrypted string"""
+    # pylint: disable=broad-except
     try:
         decrypt_filename(filename, password=get_password())
         # log.debug(f"guessing is_encrypted({filename}) -> True")
@@ -854,7 +883,3 @@ if __name__ == "__main__":
         diff2.pretty_print()
     else:
         print("Trees are identical")
-
-
-# TODO: next - projit jeste diff logiku a zcela ji porozumet, abych ji mohl verit
-# TODO: pak zacit psat testy
