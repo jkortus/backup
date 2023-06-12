@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from typing import Self
 import pathlib
 import copy
+import getpass
 from copy import deepcopy
 
 # pylint: disable=logging-fstring-interpolation
@@ -39,6 +40,8 @@ log.debug(f"Max unencrypted filename length: {MAX_UNENCRYPTED_FILENAME_LENGTH}")
 
 
 _KEYSTORE = {}  # cached keys for detected salts
+_ENCRYPTION_KEY = None  # cached encryption key
+_PASSWORD = None  # cached password
 
 
 class FSFile:
@@ -135,17 +138,19 @@ class FSDirectory:
     def dump(self, indent: int = 2) -> str:
         """returns a string representation of the directory structure"""
         result = ""
-        result += (
-            f"{' ' * indent}{self.name} ({id(self)}) [root: {self.root}] "
-            f"{'(encrypted)' if self.is_encrypted else ''}\n"
-        )
+        if self.is_encrypted:
+            display_name = f"{self.decrypted_name} (encrypted as: {self.name})"
+        else:
+            display_name = f"{self.name} (unencrypted)"
+        result += f"{' ' * indent}[{display_name}]" "\n"
         for directory in self.directories:
             result += directory.dump(indent=indent + 2)
         for file in self.files:
-            result += (
-                f"{' ' * (indent+2)}{file.name} "
-                f"{'(encrypted)' if file.is_encrypted else ''}\n"
-            )
+            if file.is_encrypted:
+                display_name = f"{file.decrypted_name} (encrypted as: {file.name})"
+            else:
+                display_name = f"{file.name} (unencrypted)"
+            result += f"{' ' * (indent+2)}{display_name} " "\n"
         return result
 
     @classmethod
@@ -646,9 +651,16 @@ def safe_is_dir(path: str):
 
 def encrypt_directory(source, destination, password):
     """encrypts all files and directories in directory and writes them to destination"""
+    global _ENCRYPTION_KEY  # pylint: disable=global-statement
     log.debug(f"encrypt_directory({source} -> {destination})")
     safe_makedirs(destination, exist_ok=True)
-    key = EncryptionKey(password=password)
+    # use one key for all files in a run. Different runs (for new files for instance)
+    # will use different keys
+    if _ENCRYPTION_KEY is None:
+        key = EncryptionKey(password=password)
+        _ENCRYPTION_KEY = key
+    else:
+        key = _ENCRYPTION_KEY
     if not safe_is_dir(source):
         raise ValueError(f"Directory {source} does not exist or is not a directory")
     with safe_cwd_cm(source):
@@ -665,30 +677,35 @@ def encrypt_directory(source, destination, password):
 
             for fname in files:
                 if fname in existing_files:
-                    log.debug(
-                        f"Skipping already encrypted file {fname} -> {existing_files[fname]}"
+                    log.info(
+                        f"Skipping already encrypted file {os.path.join(source,fname)} "
+                        f"-> {existing_files[fname]}"
                     )
                     continue
                 encrypted_filename = encrypt_filename(key, fname).decode("utf-8")
                 abs_fname = os.path.join(root, fname)
                 abs_enc_fname = os.path.join(destination, encrypted_filename)
-                log.debug(f"Encrypting file {fname} -> {encrypted_filename}")
+                log.info(
+                    f"Encrypting file {os.path.join(source,fname)} -> {abs_enc_fname}"
+                )
                 file_encryptor = FileEncryptor(abs_fname, key)
                 file_encryptor.encrypt_to_file(os.path.join(destination, abs_enc_fname))
                 file_encryptor.close()
             for dname in dirs:
                 abs_dname = os.path.join(root, dname)
                 if dname in existing_dirs:
-                    log.debug(
-                        f"Skipping already encrypted directory {dname} -> {existing_dirs[dname]}"
-                    )
                     abs_enc_dname = os.path.join(destination, existing_dirs[dname])
+                    log.info(
+                        f"Skipping already encrypted directory "
+                        f"{os.path.join(source,dname)} -> {abs_enc_dname}"
+                    )
+
                 else:
                     encrypted_dirname = encrypt_filename(key, dname).decode("utf-8")
                     abs_enc_dname = os.path.join(destination, encrypted_dirname)
-                    log.debug(
-                        f"Encrypting directory {dname} {len(dname)} -> "
-                        f"{encrypted_dirname} {len(encrypted_dirname)}"
+                    log.info(
+                        f"Encrypting directory {os.path.join(source,dname)} -> "
+                        f"{abs_enc_dname}"
                     )
                     with safe_cwd_cm(destination):
                         os.mkdir(encrypted_dirname)
@@ -751,14 +768,14 @@ def decrypt_directory(source, destination, password):
             )
             for fname in files:
                 decrypted_filename = decrypt_filename(fname, password=password)
-                if decrypted_filename in existing_files:
-                    log.debug(
-                        f"Skipping already decrypted file {fname} -> {decrypted_filename}"
-                    )
-                    continue
                 abs_fname = os.path.join(root, fname)
                 abs_dec_fname = os.path.join(destination, decrypted_filename)
-                log.debug(f"Decrypting file {fname} -> {decrypted_filename}")
+                if decrypted_filename in existing_files:
+                    log.info(
+                        f"Skipping already decrypted file {abs_fname} -> {abs_dec_fname}"
+                    )
+                    continue
+                log.info(f"Decrypting file {abs_fname} -> {abs_dec_fname}")
                 file_decryptor = FileDecryptor(abs_fname, password=password)
                 file_decryptor.decrypt_to_file(os.path.join(destination, abs_dec_fname))
                 file_decryptor.close()
@@ -766,13 +783,13 @@ def decrypt_directory(source, destination, password):
                 abs_dname = os.path.join(root, dname)
                 decrypted_dirname = decrypt_filename(dname, password=password)
                 if decrypted_dirname in existing_dirs:
-                    log.debug(
-                        f"Skipping already decrypted directory {dname} -> {decrypted_dirname}"
-                    )
                     abs_dec_dname = os.path.join(destination, decrypted_dirname)
+                    log.info(
+                        f"Skipping already decrypted directory {abs_dname} -> {abs_dec_dname}"
+                    )
                 else:
                     abs_dec_dname = os.path.join(destination, decrypted_dirname)
-                    log.debug(f"Decrypting directory {dname} -> {decrypted_dirname}")
+                    log.info(f"Decrypting directory {abs_dname} -> {abs_dec_dname}")
                     with safe_cwd_cm(destination):
                         os.mkdir(decrypted_dirname)
                 decrypt_directory(
@@ -839,8 +856,13 @@ def create_fs_tree(root: str) -> FSDirectory:
 
 def get_password():
     """asks for password interactively"""
-    # password = getpass.getpass(prompt="Password: ")
-    return "test"
+    global _PASSWORD  # pylint: disable=global-statement
+    if _PASSWORD is not None:
+        return _PASSWORD
+    else:
+        password = getpass.getpass(prompt="Password: ")
+        _PASSWORD = password
+        return password
 
 
 def is_encrypted(filename: str):

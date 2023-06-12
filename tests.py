@@ -1,6 +1,7 @@
 """ Unit tests for backup tool """
 import os
 import unittest
+from unittest.mock import Mock
 import tempfile
 import base64
 import shutil
@@ -18,6 +19,7 @@ log.setLevel(logging.WARNING)
 
 # pylint: disable=logging-fstring-interpolation
 
+base.get_password = Mock(return_value="test")
 
 class EncryptionKeyTest(unittest.TestCase):
     """Test encryption key class"""
