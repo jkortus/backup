@@ -6,10 +6,10 @@ import base64
 import shutil
 import logging
 import cryptography.exceptions
-import backup
-from backup import EncryptionKey, FSDirectory, FSFile
+import base
+from base import EncryptionKey, FSDirectory, FSFile
 
-backup.log.setLevel(backup.logging.WARNING)
+base.log.setLevel(base.logging.WARNING)
 
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ class EncryptionKeyTest(unittest.TestCase):
         password = "test"
         key = EncryptionKey(password=password)
         self.assertEqual(len(key.key), 32)
-        self.assertEqual(len(key.salt), backup.SALT_SIZE_BYTES)
+        self.assertEqual(len(key.salt), base.SALT_SIZE_BYTES)
 
     def test_key_from_salt(self):
         """Test creation of key from salt"""
@@ -63,7 +63,7 @@ class FileEncryptorTest(unittest.TestCase):
         """Test encryption of file"""
         key = EncryptionKey(password=self.password)
         # encrypt buffered
-        encryptor = backup.FileEncryptor(path=self.test_file, key=key)
+        encryptor = base.FileEncryptor(path=self.test_file, key=key)
         encrypted_data = b""
         buffer_size = 1024 * 10
         while True:
@@ -73,7 +73,7 @@ class FileEncryptorTest(unittest.TestCase):
             encrypted_data += new_data
         encryptor.close()
         # encrypt all at once with new instance
-        encryptor = backup.FileEncryptor(path=self.test_file, key=key)
+        encryptor = base.FileEncryptor(path=self.test_file, key=key)
         encrypted_data_unbuf = encryptor.read()
         encryptor.close()
         # compare the size of the encrypted data, content will differ
@@ -83,7 +83,7 @@ class FileEncryptorTest(unittest.TestCase):
     def test_decrypt_file(self):
         """Test decryption of file"""
         key = EncryptionKey(password=self.password)
-        enc_buf = backup.FileEncryptor(path=self.test_file, key=key)
+        enc_buf = base.FileEncryptor(path=self.test_file, key=key)
         enc_buf_file = self.get_temp_file()
         buffer_size = 1024 * 10
         with open(enc_buf_file, "wb") as tfd:
@@ -93,7 +93,7 @@ class FileEncryptorTest(unittest.TestCase):
                     break
                 tfd.write(data)
         enc_buf.close()
-        enc_unbuf = backup.FileEncryptor(path=self.test_file, key=key)
+        enc_unbuf = base.FileEncryptor(path=self.test_file, key=key)
         enc_unbuf_file = self.get_temp_file()
         with open(enc_unbuf_file, "wb") as tfd:
             while True:
@@ -104,7 +104,7 @@ class FileEncryptorTest(unittest.TestCase):
         enc_unbuf.close()
 
         # decrypt
-        dec_buf = backup.FileDecryptor(path=enc_buf_file, password=self.password)
+        dec_buf = base.FileDecryptor(path=enc_buf_file, password=self.password)
         dec_buf_data = b""
         while True:
             new_data = dec_buf.read(buffer_size)
@@ -112,7 +112,7 @@ class FileEncryptorTest(unittest.TestCase):
                 break
             dec_buf_data += new_data
         dec_buf.close()
-        dec_unbuf = backup.FileDecryptor(path=enc_unbuf_file, password=self.password)
+        dec_unbuf = base.FileDecryptor(path=enc_unbuf_file, password=self.password)
         dec_unbuf_data = dec_unbuf.read()
         dec_unbuf.close()
         self.assertEqual(
@@ -128,11 +128,11 @@ class FileEncryptorTest(unittest.TestCase):
         """Test encryption of file to file"""
         key = EncryptionKey(password=self.password)
         enc_file = self.get_temp_file()
-        enc = backup.FileEncryptor(path=self.test_file, key=key)
+        enc = base.FileEncryptor(path=self.test_file, key=key)
         enc.encrypt_to_file(enc_file, overwrite=True)
         enc.close()
         # decrypt
-        dec = backup.FileDecryptor(path=enc_file, password=self.password)
+        dec = base.FileDecryptor(path=enc_file, password=self.password)
         dec_data = dec.read()
         dec.close()
         self.assertEqual(
@@ -143,7 +143,7 @@ class FileEncryptorTest(unittest.TestCase):
         """Test decryption of invalid data"""
         key = EncryptionKey(password=self.password)
         enc_file = self.get_temp_file()
-        enc = backup.FileEncryptor(path=self.test_file, key=key)
+        enc = base.FileEncryptor(path=self.test_file, key=key)
         enc.encrypt_to_file(enc_file, overwrite=True)
         enc.close()
         # corrupt data
@@ -151,7 +151,7 @@ class FileEncryptorTest(unittest.TestCase):
             tfd.seek(0)
             tfd.write(b"invalid")
         # decrypt buffered
-        dec = backup.FileDecryptor(path=enc_file, password=self.password)
+        dec = base.FileDecryptor(path=enc_file, password=self.password)
         dec_data = b""
         buffer_size = 1024 * 10
         with self.assertRaises(cryptography.exceptions.InvalidTag):
@@ -162,7 +162,7 @@ class FileEncryptorTest(unittest.TestCase):
                 dec_data += new_data
         dec.close()
         # decrypt unbuffered
-        dec = backup.FileDecryptor(path=enc_file, password=self.password)
+        dec = base.FileDecryptor(path=enc_file, password=self.password)
         with self.assertRaises(cryptography.exceptions.InvalidTag):
             dec_data = dec.read()
         dec.close()
@@ -170,7 +170,7 @@ class FileEncryptorTest(unittest.TestCase):
     def test_plaintext_not_in_encrypted_data(self):
         """Test that the plaintext is not in the encrypted data"""
         key = EncryptionKey(password=self.password)
-        encryptor = backup.FileEncryptor(path=self.test_file, key=key)
+        encryptor = base.FileEncryptor(path=self.test_file, key=key)
         encrypted_data = encryptor.read()
         encryptor.close()
         self.assertNotEqual(encrypted_data, self.test_data)
@@ -180,7 +180,7 @@ class FileEncryptorTest(unittest.TestCase):
         """Test decryption of empty file"""
         enc_file = self.get_temp_file()
         with self.assertRaises(IOError):
-            backup.FileDecryptor(path=enc_file, password=self.password)
+            base.FileDecryptor(path=enc_file, password=self.password)
 
     def test_encrypt_existing_file_overwrite(self):
         """Test encryption of existing file with overwrite flag"""
@@ -189,12 +189,12 @@ class FileEncryptorTest(unittest.TestCase):
         enc_file = self.get_temp_file()
         with open(enc_file, "wb") as tfd:
             tfd.write(orig_data)
-        enc = backup.FileEncryptor(path=self.test_file, key=key)
+        enc = base.FileEncryptor(path=self.test_file, key=key)
         dest_file = self.get_temp_file()
         with self.assertRaises(OSError):
             enc.encrypt_to_file(dest_file)
         enc.close()
-        enc = backup.FileEncryptor(path=self.test_file, key=key)
+        enc = base.FileEncryptor(path=self.test_file, key=key)
         enc.encrypt_to_file(dest_file, overwrite=True)
         enc.close()
         with open(dest_file, "rb") as tfd:
@@ -205,10 +205,10 @@ class FileEncryptorTest(unittest.TestCase):
         """Test decryption of existing file with overwrite flag"""
         key = EncryptionKey(password=self.password)
         enc_file = self.get_temp_file()
-        enc = backup.FileEncryptor(path=self.test_file, key=key)
+        enc = base.FileEncryptor(path=self.test_file, key=key)
         enc.encrypt_to_file(enc_file, overwrite=True)
         enc.close()
-        dec = backup.FileDecryptor(path=enc_file, password=self.password)
+        dec = base.FileDecryptor(path=enc_file, password=self.password)
         dest_file = self.get_temp_file()
         orig_data = b"original data"
         with open(dest_file, "wb") as tfd:
@@ -216,7 +216,7 @@ class FileEncryptorTest(unittest.TestCase):
         with self.assertRaises(OSError):
             dec.decrypt_to_file(dest_file)
         dec.close()
-        dec = backup.FileDecryptor(path=enc_file, password=self.password)
+        dec = base.FileDecryptor(path=enc_file, password=self.password)
         dec.decrypt_to_file(dest_file, overwrite=True)
         dec.close()
         with open(dest_file, "rb") as tfd:
@@ -225,10 +225,10 @@ class FileEncryptorTest(unittest.TestCase):
 
     def test_filename_too_long_for_encryption(self):
         """Test that a filename that is too long for encryption raises an error"""
-        filename = "x" * (backup.MAX_FILENAME_LENGTH + 1)
+        filename = "x" * (base.MAX_FILENAME_LENGTH + 1)
         key = EncryptionKey(password=self.password)
         with self.assertRaises(ValueError):
-            backup.encrypt_filename(key, filename)
+            base.encrypt_filename(key, filename)
 
 
 class FileNameEncryptionTest(unittest.TestCase):
@@ -239,10 +239,10 @@ class FileNameEncryptionTest(unittest.TestCase):
         password = "test"
         key = EncryptionKey(password=password)
         filename = "test.txt"
-        encrypted_name = backup.encrypt_filename(key, filename)
+        encrypted_name = base.encrypt_filename(key, filename)
         self.assertNotEqual(filename, encrypted_name)
         self.assertEqual(
-            filename, backup.decrypt_filename(encrypted_name, password=password)
+            filename, base.decrypt_filename(encrypted_name, password=password)
         )
 
     def test_decrypt_corrupted_filename(self):
@@ -250,33 +250,33 @@ class FileNameEncryptionTest(unittest.TestCase):
         password = "test"
         key = EncryptionKey(password=password)
         filename = "test.txt"
-        encrypted_name = backup.encrypt_filename(key, filename)
+        encrypted_name = base.encrypt_filename(key, filename)
         raw = base64.urlsafe_b64decode(encrypted_name)
         raw = raw[:10] + b"INVALID" + raw[10:]
         encrypted_name = base64.urlsafe_b64encode(raw)
 
         with self.assertRaises(cryptography.exceptions.InvalidTag):
-            backup.decrypt_filename(encrypted_name, password=password)
+            base.decrypt_filename(encrypted_name, password=password)
 
     def test_decrypt_too_short(self):
         """Test decryption of too short filename"""
         filename = b"test"
         invalid_crypto_data = base64.urlsafe_b64encode(filename)
         with self.assertRaises(ValueError):
-            backup.decrypt_filename(invalid_crypto_data, password="test")
+            base.decrypt_filename(invalid_crypto_data, password="test")
 
     def test_filename_too_long(self):
         """Test that a filename that is too long for encryption raises an error"""
-        filename = "x" * (backup.MAX_UNENCRYPTED_FILENAME_LENGTH + 1)
+        filename = "x" * (base.MAX_UNENCRYPTED_FILENAME_LENGTH + 1)
         with self.assertRaises(ValueError):
-            backup.encrypt_filename(EncryptionKey(password="test"), filename)
+            base.encrypt_filename(EncryptionKey(password="test"), filename)
 
     def test_filename_at_max_length(self):
         """Test that a filename at the max length is encrypted"""
-        filename = "x" * backup.MAX_UNENCRYPTED_FILENAME_LENGTH
-        encrypted = backup.encrypt_filename(EncryptionKey(password="test"), filename)
+        filename = "x" * base.MAX_UNENCRYPTED_FILENAME_LENGTH
+        encrypted = base.encrypt_filename(EncryptionKey(password="test"), filename)
         self.assertNotEqual(filename, encrypted)
-        self.assertEqual(filename, backup.decrypt_filename(encrypted, password="test"))
+        self.assertEqual(filename, base.decrypt_filename(encrypted, password="test"))
 
 
 class DirectoryEncryptionTest(unittest.TestCase):
@@ -314,7 +314,7 @@ class DirectoryEncryptionTest(unittest.TestCase):
 
     def test_encrypt_empty_directory(self):
         """Test encryption of empty directory"""
-        backup.encrypt_directory(
+        base.encrypt_directory(
             self.source_dir, self.encrypted_dir, password=self.password
         )
         _, dirs, files = next(os.walk(self.encrypted_dir))
@@ -324,7 +324,7 @@ class DirectoryEncryptionTest(unittest.TestCase):
     def test_encrypt_directory(self):
         """Test encryption of directory"""
         self.create_fs_tree(self.source_dir)
-        backup.encrypt_directory(
+        base.encrypt_directory(
             self.source_dir, self.encrypted_dir, password=self.password
         )
         # check that number of files on each level is the same
@@ -351,10 +351,10 @@ class DirectoryEncryptionTest(unittest.TestCase):
     def test_decrypt_directory(self):
         """encrypt, decrypt and compare with source for one-to-one match across the tree"""
         self.create_fs_tree(self.source_dir)
-        backup.encrypt_directory(
+        base.encrypt_directory(
             self.source_dir, self.encrypted_dir, password=self.password
         )
-        backup.decrypt_directory(
+        base.decrypt_directory(
             self.encrypted_dir, self.decrypted_dir, password=self.password
         )
         source_walker = os.walk(self.source_dir)
@@ -386,16 +386,16 @@ class DirectoryEncryptionTest(unittest.TestCase):
         dec_dir = tempfile.mkdtemp(dir=self.root, prefix="decrypted-")
         current_path_length = len(source_dir)
         dir_name_size = (
-            backup.MAX_UNENCRYPTED_FILENAME_LENGTH
+            base.MAX_UNENCRYPTED_FILENAME_LENGTH
         )  # length of directory name
         # long enough but not too much for os.makedirs
-        depth = int((backup.MAX_PATH_LENGTH - current_path_length) / dir_name_size) - 1
+        depth = int((base.MAX_PATH_LENGTH - current_path_length) / dir_name_size) - 1
         dirtree = "/".join(
             [str(_) + "x" * (dir_name_size - len(str(_))) for _ in range(depth)]
         )
         last_dir = os.path.join(source_dir, dirtree)
         os.makedirs(last_dir)
-        filename = "f" * backup.MAX_UNENCRYPTED_FILENAME_LENGTH
+        filename = "f" * base.MAX_UNENCRYPTED_FILENAME_LENGTH
         os.chdir(last_dir)
         os.makedirs(dirtree)  # double the "long enough", so it's definitely too much :)
         os.chdir(dirtree)
@@ -404,8 +404,8 @@ class DirectoryEncryptionTest(unittest.TestCase):
             tfd.write(b"test")
         abs_filename = os.path.join(os.getcwd(), filename)
         log.debug(f"Abs path length of test filename: {len(abs_filename)}")
-        backup.encrypt_directory(source_dir, dest_dir, password=self.password)
-        backup.decrypt_directory(dest_dir, dec_dir, password=self.password)
+        base.encrypt_directory(source_dir, dest_dir, password=self.password)
+        base.decrypt_directory(dest_dir, dec_dir, password=self.password)
 
         source_walker = os.walk(source_dir)
         decrypted_walker = os.walk(dec_dir)
@@ -472,7 +472,7 @@ class DirectoryComparisonTest(unittest.TestCase):
             tfd.write(b"test")
         with open(os.path.join(self.source_dir, "newdir", "file2"), "wb") as tfd:
             tfd.write(b"test2")
-        backup.encrypt_directory(self.source_dir, self.encrypted_dir, password=password)
+        base.encrypt_directory(self.source_dir, self.encrypted_dir, password=password)
         dir1 = FSDirectory.from_filesystem(self.encrypted_dir)
         dir2 = FSDirectory.from_filesystem(self.encrypted_dir)
         self.assertIsNone(
@@ -616,7 +616,7 @@ class DirectoryComparisonTest(unittest.TestCase):
         """encrypts a directory and runs a diff on it"""
         password = "test"
         dir1 = FSDirectory.from_filesystem(self.source_dir)
-        backup.encrypt_directory(self.source_dir, self.encrypted_dir, password)
+        base.encrypt_directory(self.source_dir, self.encrypted_dir, password)
         dir2 = FSDirectory.from_filesystem(self.encrypted_dir)
         diff = dir1.one_way_diff(dir2)
         self.assertIsNone(diff, "No difference expected on identical directories")
