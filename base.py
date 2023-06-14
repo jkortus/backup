@@ -159,7 +159,7 @@ class FSDirectory:
         if not safe_is_dir(path):
             raise IOError(f"Directory {path} does not exist or is not a directory")
         with safe_cwd_cm(path):
-            _, dirs, files = next(os.walk("."))
+            _, dirs, files = next(safe_walker("."))
             # log.debug(f"Content of {path}: dirs: {dirs} files: {files}")
         name = pathlib.Path(path).name
         parent = pathlib.Path(path).parent
@@ -591,7 +591,7 @@ def list_encrypted_directory(directory, password=None):
     encrypted_dirs = {}
     encrypted_files = {}
     with safe_cwd_cm(directory):
-        for root, dirs, files in os.walk("."):
+        for root, dirs, files in safe_walker("."):
             root = directory
             for dname in dirs:
                 # TODO: error handling for invalid (=unecrypted) filenames
@@ -664,7 +664,7 @@ def encrypt_directory(source, destination, password):
     if not safe_is_dir(source):
         raise ValueError(f"Directory {source} does not exist or is not a directory")
     with safe_cwd_cm(source):
-        for root, dirs, files in os.walk("."):
+        for root, dirs, files in safe_walker("."):
             root = source
             existing_dirs, existing_files = list_encrypted_directory(
                 destination, password=password
@@ -750,6 +750,40 @@ def safe_cwd_cm(directory: str):
         safe_cwd(old_cwd)
 
 
+def safe_walker(directory: str):
+    """
+    Generator that returns only regular files and dirs and
+    ignores symlinks and other special files
+    """
+    if not safe_is_dir(directory):
+        raise IOError(f"Directory {directory} does not exist or is not a directory")
+    with safe_cwd_cm(directory):
+        for root, dirs, files in os.walk("."):
+            root = directory
+            filtered_dirs = []
+            filtered_files = []
+            for dname in dirs:
+                if os.path.islink(dname):
+                    log.warning(
+                        f"Symbolic link  {os.path.join(directory, dname)} ignored."
+                    )
+                    continue
+                filtered_dirs.append(dname)
+            for fname in files:
+                if os.path.islink(fname):
+                    log.warning(
+                        f"Symbolic link  {os.path.join(directory, fname)} ignored."
+                    )
+                    continue
+                if not os.path.isfile(fname):
+                    log.warning(
+                        f"Special file {os.path.join(directory, fname)} ignored."
+                    )
+                    continue
+                filtered_files.append(fname)
+            yield (root, filtered_dirs, filtered_files)
+
+
 def decrypt_directory(source, destination, password):
     """decrypts all files and directories in directory and writes them to destination"""
     log.debug(f"decrypt_directory({source} -> {destination})")
@@ -757,10 +791,10 @@ def decrypt_directory(source, destination, password):
     if not safe_is_dir(source):
         raise ValueError(f"Directory {source} does not exist or is not a directory")
     with safe_cwd_cm(source):
-        for root, dirs, files in os.walk("."):
+        for root, dirs, files in safe_walker("."):
             root = source  # override due to cwd context manager
             with safe_cwd_cm(destination):
-                _, existing_dirs, existing_files = next(os.walk("."))
+                _, existing_dirs, existing_files = next(safe_walker("."))
             log.debug(f"Source dirs in [{source}]: {dirs} Source files: {files}")
             log.debug(
                 f"Existing decrypted dirs in [{destination}]: {existing_dirs} "
@@ -805,7 +839,7 @@ def compare_directories(source: str, destination: str, password: str):
     if not safe_is_dir(destination):
         raise IOError(f"Directory {destination} does not exist or is not a directory")
     with safe_cwd_cm(source):
-        _, source_dirs, source_files = next(os.walk("."))
+        _, source_dirs, source_files = next(safe_walker("."))
         log.debug(f"Source content {source}: dirs: {source_dirs} files: {source_files}")
     with safe_cwd_cm(destination):
         encrypted_content = list_encrypted_directory(destination, password=password)
@@ -844,7 +878,7 @@ def create_fs_tree(root: str) -> FSDirectory:
     if not safe_is_dir(root):
         raise IOError(f"Directory {root} does not exist or is not a directory")
     with safe_cwd_cm(root):
-        _, dirs, files = next(os.walk("."))
+        _, dirs, files = next(safe_walker("."))
         log.debug(f"Content of {root}: dirs: {dirs} files: {files}")
     fs_root = FSDirectory(name=root, root=root)
     for dname in dirs:

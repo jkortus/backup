@@ -21,6 +21,7 @@ log.setLevel(logging.WARNING)
 
 base.get_password = Mock(return_value="test")
 
+
 class EncryptionKeyTest(unittest.TestCase):
     """Test encryption key class"""
 
@@ -387,9 +388,7 @@ class DirectoryEncryptionTest(unittest.TestCase):
         dest_dir = tempfile.mkdtemp(dir=self.root, prefix="encrypted-")
         dec_dir = tempfile.mkdtemp(dir=self.root, prefix="decrypted-")
         current_path_length = len(source_dir)
-        dir_name_size = (
-            base.MAX_UNENCRYPTED_FILENAME_LENGTH
-        )  # length of directory name
+        dir_name_size = base.MAX_UNENCRYPTED_FILENAME_LENGTH  # length of directory name
         # long enough but not too much for os.makedirs
         depth = int((base.MAX_PATH_LENGTH - current_path_length) / dir_name_size) - 1
         dirtree = "/".join(
@@ -435,6 +434,35 @@ class DirectoryEncryptionTest(unittest.TestCase):
                 self.assertEqual(
                     source_data, decrypted_data, "Decrypted data does not match source"
                 )
+
+    def test_special_files_exclusion(self):
+        """Test that special files are excluded from encryption"""
+
+        os.mkdir(os.path.join(self.source_dir, "regulardir"))
+        with open(os.path.join(self.source_dir, "regularfile"), "wb") as tfd:
+            tfd.write(b"test")
+        # create symlink to file and directory
+        os.symlink(
+            os.path.join(self.source_dir, "regulardir"),
+            os.path.join(self.source_dir, "symlinkdir"),
+        )
+        os.symlink(
+            os.path.join(self.source_dir, "regularfile"),
+            os.path.join(self.source_dir, "symlinkfile"),
+        )
+        # create fifo
+        # os.mkfifo(os.path.join(self.source_dir, "fifo"))
+        # fifo and symlinks are enough
+        base.encrypt_directory(
+            self.source_dir, self.encrypted_dir, password=self.password
+        )
+        edir = FSDirectory.from_filesystem(self.encrypted_dir)
+        self.assertEqual(
+            len(edir.file_names()), 1, "Non-regular files were not excluded."
+        )
+        self.assertEqual(
+            len(edir.dir_names()), 1, "Non-regular directories were not excluded."
+        )
 
 
 class DirectoryComparisonTest(unittest.TestCase):
