@@ -478,6 +478,20 @@ class FileDecryptor:
             self._fd = None
 
 
+class StatusReporter:
+    """
+    Collects and reports events to inform the user
+    about a long running process.
+    """
+
+    def __init__(self):
+        self.files_processed = 0
+
+    def add_file_processed(self):
+        self.files_processed += 1
+
+
+
 def _encrypt(key: EncryptionKey, plaintext: bytes):
     """Encrypts plaintext byte data with the given key and returns a tuple of iv, ciphertext, tag"""
     # pylint: disable=invalid-name
@@ -649,7 +663,7 @@ def safe_is_dir(path: str):
             return os.path.isdir(path)
 
 
-def encrypt_directory(source, destination, password):
+def encrypt_directory(source, destination, password, status_reporter=None):
     """encrypts all files and directories in directory and writes them to destination"""
     global _ENCRYPTION_KEY  # pylint: disable=global-statement
     log.debug(f"encrypt_directory({source} -> {destination})")
@@ -689,6 +703,8 @@ def encrypt_directory(source, destination, password):
                     f"Encrypting file {os.path.join(source,fname)} -> {abs_enc_fname}"
                 )
                 file_encryptor = FileEncryptor(abs_fname, key)
+                if status_reporter:
+                    status_reporter.add_file_processed()
                 file_encryptor.encrypt_to_file(os.path.join(destination, abs_enc_fname))
                 file_encryptor.close()
             for dname in dirs:
@@ -710,7 +726,10 @@ def encrypt_directory(source, destination, password):
                     with safe_cwd_cm(destination):
                         os.mkdir(encrypted_dirname)
                 encrypt_directory(
-                    source=abs_dname, destination=abs_enc_dname, password=password
+                    source=abs_dname,
+                    destination=abs_enc_dname,
+                    password=password,
+                    status_reporter=status_reporter,
                 )
             break  # one level in each call, the rest gets handled in the recurisve calls
 

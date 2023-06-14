@@ -50,11 +50,16 @@ def main():
 
     if not args.password:
         args.password = base.get_password()
-
+    status_reporter = base.StatusReporter()
     if args.encrypt:
         try:
-            base.encrypt_directory(args.encrypt[0], args.encrypt[1], args.password)
-            print("Encryption successfully finished.")
+            base.encrypt_directory(
+                args.encrypt[0], args.encrypt[1], args.password, status_reporter
+            )
+            print(
+                f"Encryption successfully finished. "
+                f"Encrypted files: {status_reporter.files_processed}"
+            )
         except Exception as ex:
             log.exception(ex)
             sys.exit(2)
