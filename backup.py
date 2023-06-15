@@ -57,8 +57,9 @@ def main():
                 args.encrypt[0], args.encrypt[1], args.password, status_reporter
             )
             print(
-                f"Encryption successfully finished. "
+                f"\nEncryption successfully finished. "
                 f"Encrypted files: {status_reporter.files_processed}"
+                f" Skipped files: {status_reporter.files_skipped}"
             )
         except Exception as ex:
             log.exception(ex)

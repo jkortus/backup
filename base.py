@@ -1,6 +1,5 @@
 """ Encrypt files and directories for backup on untrusted storage"""
 import os
-
 import base64
 import logging
 from contextlib import contextmanager
@@ -18,7 +17,7 @@ from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 # https://cryptography.io/en/latest/hazmat/primitives/symmetric-encryption/#cryptography.hazmat.primitives.ciphers.modes.GCM
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.CRITICAL)
 log = logging.getLogger(__name__)
 
 
@@ -486,10 +485,23 @@ class StatusReporter:
 
     def __init__(self):
         self.files_processed = 0
+        self.files_skipped = 0
 
-    def add_file_processed(self):
-        self.files_processed += 1
+    def action(self, name, *args):
+        """reports an action"""
+        if name == "encrypt_file":
+            self.files_processed += 1
+            # seek at start of the line
+            if self.files_processed == 0:
+                print("\n")
+            print(f"\rEncrypting file {args[0]}", end="")
 
+        elif name == "skip_file":
+            self.files_skipped += 1
+            self.files_processed += 1
+            print(
+                f"\rSkipping file/dir {args[0]} (already encrypted in target)", end=""
+            )
 
 
 def _encrypt(key: EncryptionKey, plaintext: bytes):
@@ -677,61 +689,68 @@ def encrypt_directory(source, destination, password, status_reporter=None):
         key = _ENCRYPTION_KEY
     if not safe_is_dir(source):
         raise ValueError(f"Directory {source} does not exist or is not a directory")
-    with safe_cwd_cm(source):
-        for root, dirs, files in safe_walker("."):
-            root = source
-            existing_dirs, existing_files = list_encrypted_directory(
-                destination, password=password
-            )
-            log.debug(f"Source dirs in [{source}]: {dirs} Source files: {files}")
-            log.debug(
-                f"Existing encrypted dirs in [{destination}]: {existing_dirs} "
-                f"Existing files: {existing_files}"
-            )
 
-            for fname in files:
-                if fname in existing_files:
-                    log.info(
-                        f"Skipping already encrypted file {os.path.join(source,fname)} "
-                        f"-> {existing_files[fname]}"
-                    )
-                    continue
-                encrypted_filename = encrypt_filename(key, fname).decode("utf-8")
-                abs_fname = os.path.join(root, fname)
-                abs_enc_fname = os.path.join(destination, encrypted_filename)
+    for root, dirs, files in safe_walker(source):
+        root = source
+        existing_dirs, existing_files = list_encrypted_directory(
+            destination, password=password
+        )
+        log.debug(f"Source dirs in [{source}]: {dirs} Source files: {files}")
+        log.debug(
+            f"Existing encrypted dirs in [{destination}]: {existing_dirs} "
+            f"Existing files: {existing_files}"
+        )
+
+        for fname in files:
+            abs_fname = os.path.join(root, fname)
+            if fname in existing_files:
                 log.info(
-                    f"Encrypting file {os.path.join(source,fname)} -> {abs_enc_fname}"
+                    f"Skipping already encrypted file {abs_fname} "
+                    f"-> {existing_files[fname]}"
                 )
-                file_encryptor = FileEncryptor(abs_fname, key)
                 if status_reporter:
-                    status_reporter.add_file_processed()
-                file_encryptor.encrypt_to_file(os.path.join(destination, abs_enc_fname))
-                file_encryptor.close()
-            for dname in dirs:
-                abs_dname = os.path.join(root, dname)
-                if dname in existing_dirs:
-                    abs_enc_dname = os.path.join(destination, existing_dirs[dname])
-                    log.info(
-                        f"Skipping already encrypted directory "
-                        f"{os.path.join(source,dname)} -> {abs_enc_dname}"
+                    status_reporter.action(
+                        "skip_file", abs_fname, existing_files[fname]
                     )
+                continue
 
-                else:
-                    encrypted_dirname = encrypt_filename(key, dname).decode("utf-8")
-                    abs_enc_dname = os.path.join(destination, encrypted_dirname)
-                    log.info(
-                        f"Encrypting directory {os.path.join(source,dname)} -> "
-                        f"{abs_enc_dname}"
-                    )
-                    with safe_cwd_cm(destination):
-                        os.mkdir(encrypted_dirname)
-                encrypt_directory(
-                    source=abs_dname,
-                    destination=abs_enc_dname,
-                    password=password,
-                    status_reporter=status_reporter,
+            encrypted_filename = encrypt_filename(key, fname).decode("utf-8")
+            abs_enc_fname = os.path.join(destination, encrypted_filename)
+
+            log.info(f"Encrypting file {os.path.join(source,fname)} -> {abs_enc_fname}")
+            file_encryptor = FileEncryptor(abs_fname, key)
+            if status_reporter:
+                status_reporter.action("encrypt_file", abs_fname, abs_enc_fname)
+            # TODO: bug below, abs_enc_fname should be enough?
+            file_encryptor.encrypt_to_file(os.path.join(destination, abs_enc_fname))
+            file_encryptor.close()
+        for dname in dirs:
+            abs_dname = os.path.join(root, dname)
+            if dname in existing_dirs:
+                abs_enc_dname = os.path.join(destination, existing_dirs[dname])
+                log.info(
+                    f"Skipping already encrypted directory "
+                    f"{os.path.join(source,dname)} -> {abs_enc_dname}"
                 )
-            break  # one level in each call, the rest gets handled in the recurisve calls
+                if status_reporter:
+                    status_reporter.action("skip_directory", abs_dname, abs_enc_dname)
+
+            else:
+                encrypted_dirname = encrypt_filename(key, dname).decode("utf-8")
+                abs_enc_dname = os.path.join(destination, encrypted_dirname)
+                log.info(
+                    f"Encrypting directory {os.path.join(source,dname)} -> "
+                    f"{abs_enc_dname}"
+                )
+                with safe_cwd_cm(destination):
+                    os.mkdir(encrypted_dirname)
+            encrypt_directory(
+                source=abs_dname,
+                destination=abs_enc_dname,
+                password=password,
+                status_reporter=status_reporter,
+            )
+        break  # one level in each call, the rest gets handled in the recurisve calls
 
 
 def safe_cwd(directory: str):
@@ -784,14 +803,14 @@ def safe_walker(directory: str):
             for dname in dirs:
                 if os.path.islink(dname):
                     log.warning(
-                        f"Symbolic link  {os.path.join(directory, dname)} ignored."
+                        f"Symbolic link {os.path.join(directory, dname)} ignored."
                     )
                     continue
                 filtered_dirs.append(dname)
             for fname in files:
                 if os.path.islink(fname):
                     log.warning(
-                        f"Symbolic link  {os.path.join(directory, fname)} ignored."
+                        f"Symbolic link {os.path.join(directory, fname)} ignored."
                     )
                     continue
                 if not os.path.isfile(fname):
@@ -809,46 +828,46 @@ def decrypt_directory(source, destination, password):
     safe_makedirs(destination, exist_ok=True)
     if not safe_is_dir(source):
         raise ValueError(f"Directory {source} does not exist or is not a directory")
-    with safe_cwd_cm(source):
-        for root, dirs, files in safe_walker("."):
-            root = source  # override due to cwd context manager
-            with safe_cwd_cm(destination):
-                _, existing_dirs, existing_files = next(safe_walker("."))
-            log.debug(f"Source dirs in [{source}]: {dirs} Source files: {files}")
-            log.debug(
-                f"Existing decrypted dirs in [{destination}]: {existing_dirs} "
-                f"Existing files: {existing_files}"
-            )
-            for fname in files:
-                decrypted_filename = decrypt_filename(fname, password=password)
-                abs_fname = os.path.join(root, fname)
-                abs_dec_fname = os.path.join(destination, decrypted_filename)
-                if decrypted_filename in existing_files:
-                    log.info(
-                        f"Skipping already decrypted file {abs_fname} -> {abs_dec_fname}"
-                    )
-                    continue
-                log.info(f"Decrypting file {abs_fname} -> {abs_dec_fname}")
-                file_decryptor = FileDecryptor(abs_fname, password=password)
-                file_decryptor.decrypt_to_file(os.path.join(destination, abs_dec_fname))
-                file_decryptor.close()
-            for dname in dirs:
-                abs_dname = os.path.join(root, dname)
-                decrypted_dirname = decrypt_filename(dname, password=password)
-                if decrypted_dirname in existing_dirs:
-                    abs_dec_dname = os.path.join(destination, decrypted_dirname)
-                    log.info(
-                        f"Skipping already decrypted directory {abs_dname} -> {abs_dec_dname}"
-                    )
-                else:
-                    abs_dec_dname = os.path.join(destination, decrypted_dirname)
-                    log.info(f"Decrypting directory {abs_dname} -> {abs_dec_dname}")
-                    with safe_cwd_cm(destination):
-                        os.mkdir(decrypted_dirname)
-                decrypt_directory(
-                    source=abs_dname, destination=abs_dec_dname, password=password
+
+    for root, dirs, files in safe_walker(source):
+        root = source  # override due to cwd context manager
+        with safe_cwd_cm(destination):
+            _, existing_dirs, existing_files = next(safe_walker("."))
+        log.debug(f"Source dirs in [{source}]: {dirs} Source files: {files}")
+        log.debug(
+            f"Existing decrypted dirs in [{destination}]: {existing_dirs} "
+            f"Existing files: {existing_files}"
+        )
+        for fname in files:
+            decrypted_filename = decrypt_filename(fname, password=password)
+            abs_fname = os.path.join(root, fname)
+            abs_dec_fname = os.path.join(destination, decrypted_filename)
+            if decrypted_filename in existing_files:
+                log.info(
+                    f"Skipping already decrypted file {abs_fname} -> {abs_dec_fname}"
                 )
-            break  # one level in each call, the rest gets handled in the recurisve calls
+                continue
+            log.info(f"Decrypting file {abs_fname} -> {abs_dec_fname}")
+            file_decryptor = FileDecryptor(abs_fname, password=password)
+            file_decryptor.decrypt_to_file(os.path.join(destination, abs_dec_fname))
+            file_decryptor.close()
+        for dname in dirs:
+            abs_dname = os.path.join(root, dname)
+            decrypted_dirname = decrypt_filename(dname, password=password)
+            if decrypted_dirname in existing_dirs:
+                abs_dec_dname = os.path.join(destination, decrypted_dirname)
+                log.info(
+                    f"Skipping already decrypted directory {abs_dname} -> {abs_dec_dname}"
+                )
+            else:
+                abs_dec_dname = os.path.join(destination, decrypted_dirname)
+                log.info(f"Decrypting directory {abs_dname} -> {abs_dec_dname}")
+                with safe_cwd_cm(destination):
+                    os.mkdir(decrypted_dirname)
+            decrypt_directory(
+                source=abs_dname, destination=abs_dec_dname, password=password
+            )
+        break  # one level in each call, the rest gets handled in the recurisve calls
 
 
 def compare_directories(source: str, destination: str, password: str):
