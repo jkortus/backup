@@ -1,7 +1,7 @@
 """ Unit tests for backup tool """
 import os
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 import tempfile
 import base64
 import shutil
@@ -10,7 +10,7 @@ import cryptography.exceptions
 import base
 from base import EncryptionKey, FSDirectory, FSFile
 
-base.log.setLevel(base.logging.WARNING)
+base.log.setLevel(base.logging.CRITICAL)
 
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger(__name__)
@@ -20,6 +20,11 @@ log.setLevel(logging.WARNING)
 # pylint: disable=logging-fstring-interpolation
 
 base.get_password = Mock(return_value="test")
+
+
+def fake_fstat_size(descriptor):  # pylint: disable=unused-argument
+    """return fstat with size field bigger than max limit, all other entries are zero"""
+    return os.stat_result((0, 0, 0, 0, 0, 0, base.MAX_FILE_SIZE + 1, 0, 0, 0))
 
 
 class EncryptionKeyTest(unittest.TestCase):
@@ -233,6 +238,21 @@ class FileEncryptorTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             base.encrypt_filename(key, filename)
 
+    @patch("os.fstat", fake_fstat_size)
+    def test_file_too_big_to_encrypt(self):
+        """Tests that encryption attempt of too large file raises an error"""
+        key = EncryptionKey(password=self.password)
+        encryptor = base.FileEncryptor(path=self.test_file, key=key)
+        with self.assertRaises(
+            IOError,
+            msg="File encryption of file bigger than limit did not raise an error",
+        ):
+            encryptor.encrypt_to_file(
+                os.path.join(self.test_dir, "test.enc"), overwrite=True
+            )
+
+        encryptor.close()
+
 
 class FileNameEncryptionTest(unittest.TestCase):
     """Test encryption of filenames"""
@@ -280,6 +300,7 @@ class FileNameEncryptionTest(unittest.TestCase):
         encrypted = base.encrypt_filename(EncryptionKey(password="test"), filename)
         self.assertNotEqual(filename, encrypted)
         self.assertEqual(filename, base.decrypt_filename(encrypted, password="test"))
+        self.assertLessEqual(len(encrypted), base.MAX_FILENAME_LENGTH)
 
 
 class DirectoryEncryptionTest(unittest.TestCase):
