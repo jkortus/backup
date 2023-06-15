@@ -29,18 +29,24 @@ SALT_SIZE_BYTES = 16
 
 # file system limits
 MAX_FILENAME_LENGTH = 255
+# https://en.wikipedia.org/wiki/Galois/Counter_Mode
+MAX_FILE_SIZE = int((2**39 - 256) / 8)
 MAX_PATH_LENGTH = 4096
-BASE64_OVERHEAD = 1.5  # 50% overhead, 40 was too low
-MAX_UNENCRYPTED_FILENAME_LENGTH = int(
-    (MAX_FILENAME_LENGTH - IV_SIZE_BYTES - TAG_SIZE_BYTES - SALT_SIZE_BYTES)
-    / BASE64_OVERHEAD
+# base64 encoded output is always multiple of 4 bytes
+# its 6 to 8 bits encoding
+# int(a/b) * b = floor(a/b) :)
+MAX_UNENCRYPTED_FILENAME_LENGTH = (
+    int(int(MAX_FILENAME_LENGTH / 4) * 4 / 8 * 6)
+    - IV_SIZE_BYTES
+    - TAG_SIZE_BYTES
+    - SALT_SIZE_BYTES
 )
-log.debug(f"Max unencrypted filename length: {MAX_UNENCRYPTED_FILENAME_LENGTH}")
-
-
 _KEYSTORE = {}  # cached keys for detected salts
 _ENCRYPTION_KEY = None  # cached encryption key
 _PASSWORD = None  # cached password
+
+log.debug(f"Max unencrypted filename length: {MAX_UNENCRYPTED_FILENAME_LENGTH}")
+log.debug(f"Max size of unecrypted input: {MAX_FILE_SIZE} bytes")
 
 
 class FSFile:
@@ -947,33 +953,3 @@ def is_encrypted(filename: str):
     except Exception:
         # log.debug(f"guessing is_encrypted({filename}) -> False")
         return False
-
-
-if __name__ == "__main__":
-    # encrypt_directory(
-    #     "/tmp/backup_test/source", "/tmp/backup_test/encrypted", password="test"
-    # )
-
-    # decrypt_directory(
-    #     "/tmp/backup_test/encrypted", "/tmp/backup_test/decrypted", password="test"
-    # )
-
-    # compare_directories("/tmp/backup_test/source", "/tmp/backup_test/encrypted", password="test")
-    # encrypt_directory(
-    #     "/tmp/backup_test/source-new", "/tmp/backup_test/encrypted", password="test"
-    # )
-    root1 = FSDirectory.from_filesystem("/data/tmp/test/root-01")
-    # encrypt_directory("/data/tmp/test/root-01", "/data/tmp/test/encrypted-01", password="test")
-    encrypted = FSDirectory.from_filesystem("/data/tmp/test/encrypted-01")
-    encrypted.pretty_print()
-    diff = root1.one_way_diff(encrypted)
-    if diff:
-        diff.pretty_print()
-    else:
-        print("Trees are identical")
-
-    diff2 = encrypted.one_way_diff(root1)
-    if diff2:
-        diff2.pretty_print()
-    else:
-        print("Trees are identical")
