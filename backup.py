@@ -63,6 +63,7 @@ def main():
             )
         except Exception as ex:
             log.exception(ex)
+            print("Error: " + str(ex), file=sys.stderr)
             sys.exit(2)
     elif args.decrypt:
         try:
@@ -70,6 +71,7 @@ def main():
             print("Decryption successfully finished.")
         except Exception as ex:
             log.exception(ex)
+            print("Error: " + str(ex), file=sys.stderr)
             sys.exit(2)
     elif args.ls:
         try:

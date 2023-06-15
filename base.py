@@ -324,6 +324,12 @@ class FileEncryptor:
 
             else:
                 self._fd = open(self.path, "rb")
+            file_size = os.fstat(self._fd.fileno()).st_size
+            if file_size > MAX_FILE_SIZE:
+                raise IOError(
+                    f"File size {file_size} of {self.path} is over maximum size"
+                    f" limit of {MAX_FILE_SIZE} bytes and cannot be encrypted. "
+                )
         unencrypted_data = self._fd.read(*args)
 
         if unencrypted_data:
