@@ -62,7 +62,7 @@ def main():
                 f" Skipped files: {status_reporter.files_skipped}"
             )
         except Exception as ex:
-            log.exception(ex)
+            log.debug(f"Exception: {ex}", exc_info=True)
             print("Error: " + str(ex), file=sys.stderr)
             sys.exit(2)
     elif args.decrypt:

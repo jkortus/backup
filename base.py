@@ -10,6 +10,7 @@ import getpass
 from copy import deepcopy
 
 # pylint: disable=logging-fstring-interpolation
+import cryptography.exceptions
 
 # https://cryptography.io/en/latest/hazmat/primitives/key-derivation-functions/#scrypt
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
@@ -35,11 +36,13 @@ MAX_PATH_LENGTH = 4096
 # base64 encoded output is always multiple of 4 bytes
 # its 6 to 8 bits encoding
 # int(a/b) * b = floor(a/b) :)
+MAGIC_FILENAME_HEADER = b"\x00"  # something that is very unlikely in filename
 MAX_UNENCRYPTED_FILENAME_LENGTH = (
     int(int(MAX_FILENAME_LENGTH / 4) * 4 / 8 * 6)
     - IV_SIZE_BYTES
     - TAG_SIZE_BYTES
     - SALT_SIZE_BYTES
+    - len(MAGIC_FILENAME_HEADER)
 )
 _KEYSTORE = {}  # cached keys for detected salts
 _ENCRYPTION_KEY = None  # cached encryption key
@@ -47,6 +50,10 @@ _PASSWORD = None  # cached password
 
 log.debug(f"Max unencrypted filename length: {MAX_UNENCRYPTED_FILENAME_LENGTH}")
 log.debug(f"Max size of unecrypted input: {MAX_FILE_SIZE} bytes")
+
+
+class DecryptionError(Exception):
+    """Raised when decryption fails"""
 
 
 class FSFile:
@@ -160,7 +167,7 @@ class FSDirectory:
 
     @classmethod
     def from_filesystem(cls, path: str, recursive=True) -> Self:
-        """creates a directory tree from the file system"""
+        """creates a FSdirectory tree from the file system"""
         if not safe_is_dir(path):
             raise IOError(f"Directory {path} does not exist or is not a directory")
         with safe_cwd_cm(path):
@@ -451,14 +458,20 @@ class FileDecryptor:
             args.append(min(size, self.max_read_pos - self._fd.tell()))
         encrypted_data = self._fd.read(*args)
         decrypted_data = self.decryptor.update(encrypted_data)
-        if not encrypted_data:
-            self.finalized = True
-            return self.decryptor.finalize()
-        # if we read it all in one go, we need to finalize as there won't be
-        # any other read call coming
-        if self._fd.tell() == self.max_read_pos:
-            self.finalized = True
-            decrypted_data += self.decryptor.finalize()
+        try:
+            if not encrypted_data:
+                self.finalized = True
+                return self.decryptor.finalize()
+            # if we read it all in one go, we need to finalize as there won't be
+            # any other read call coming
+            if self._fd.tell() == self.max_read_pos:
+                self.finalized = True
+                decrypted_data += self.decryptor.finalize()
+        except cryptography.exceptions.InvalidTag as ex:
+            log.debug(f"Failed to decrypt file {self.path}: {ex}", exc_info=True)
+            raise DecryptionError(
+                f"Failed to decrypt file {self.path}, invalid password given?"
+            ) from ex
         return decrypted_data
 
     def decrypt_to_file(self, destination, overwrite=False):
@@ -560,7 +573,9 @@ def encrypt_filename(key: EncryptionKey, plaintext: str) -> bytes:
             f"Max length is {MAX_UNENCRYPTED_FILENAME_LENGTH}."
         )
     iv, ciphertext, tag = _encrypt(key, plaintext.encode("utf-8"))
-    result = base64.urlsafe_b64encode(iv + tag + key.salt + ciphertext)
+    result = base64.urlsafe_b64encode(
+        MAGIC_FILENAME_HEADER + iv + tag + key.salt + ciphertext
+    )
     if len(result) > MAX_FILENAME_LENGTH:
         raise RuntimeError(
             f"Encrypted filename {result} is too long ({len(result)}). "
@@ -585,18 +600,26 @@ def decrypt_filename(encrypted_filename: bytes, password=None) -> str:
             f"Probably invalid (non-encrypted) filename for decryption?: {ex}"
         ) from ex
 
-    if len(decoded) < IV_SIZE_BYTES + TAG_SIZE_BYTES + SALT_SIZE_BYTES:
+    if len(decoded) < IV_SIZE_BYTES + TAG_SIZE_BYTES + SALT_SIZE_BYTES + len(
+        MAGIC_FILENAME_HEADER
+    ):
         raise ValueError(
             f"Invalid encrypted filename ({encrypted_filename}). "
             "Too short to get all required metadata."
         )
-    iv = decoded[:IV_SIZE_BYTES]
-    tag = decoded[IV_SIZE_BYTES : IV_SIZE_BYTES + TAG_SIZE_BYTES]
+    magic_header = decoded[: len(MAGIC_FILENAME_HEADER)]
+    header_len = len(MAGIC_FILENAME_HEADER)
+    iv = decoded[header_len : IV_SIZE_BYTES + header_len]
+    tag = decoded[
+        IV_SIZE_BYTES + header_len : IV_SIZE_BYTES + TAG_SIZE_BYTES + header_len
+    ]
     salt = decoded[
         IV_SIZE_BYTES
-        + TAG_SIZE_BYTES : IV_SIZE_BYTES
+        + TAG_SIZE_BYTES
+        + header_len : IV_SIZE_BYTES
         + TAG_SIZE_BYTES
         + SALT_SIZE_BYTES
+        + header_len
     ]
     try:
         key = _KEYSTORE[salt]
@@ -606,11 +629,20 @@ def decrypt_filename(encrypted_filename: bytes, password=None) -> str:
         )
         key = EncryptionKey(password=password, salt=salt)
         _KEYSTORE[salt] = key
-    ciphertext = decoded[IV_SIZE_BYTES + TAG_SIZE_BYTES + SALT_SIZE_BYTES :]
+    ciphertext = decoded[
+        IV_SIZE_BYTES + TAG_SIZE_BYTES + SALT_SIZE_BYTES + header_len :
+    ]
     try:
         return _decrypt(key, iv, ciphertext, tag).decode("utf-8")
-    except Exception as ex:
-        log.debug(f"Failed to decrypt filename {encrypted_filename}: {ex}")
+    except cryptography.exceptions.InvalidTag as ex:
+        log.debug(
+            f"Failed to decrypt filename {encrypted_filename}: {ex}", exc_info=True
+        )
+        raise DecryptionError(
+            f"Failed to decrypt filename {encrypted_filename}, invalid password given?"
+        ) from ex
+    except:
+        log.error("Unexpected error durin filename decryption:", exc_info=True)
         raise
 
 
@@ -879,9 +911,12 @@ def is_encrypted(filename: str):
     """guess if the filename is an encrypted string"""
     # pylint: disable=broad-except
     try:
-        decrypt_filename(filename, password=get_password())
-        # log.debug(f"guessing is_encrypted({filename}) -> True")
-        return True
+        # decrypt_filename(filename, password=get_password())
+        b64_decoded = base64.urlsafe_b64decode(filename)
+        if b64_decoded.startswith(MAGIC_FILENAME_HEADER):
+            return True
+        else:
+            return False
     except Exception:
         # log.debug(f"guessing is_encrypted({filename}) -> False")
         return False

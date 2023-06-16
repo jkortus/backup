@@ -162,7 +162,7 @@ class FileEncryptorTest(unittest.TestCase):
         dec = base.FileDecryptor(path=enc_file, password=self.password)
         dec_data = b""
         buffer_size = 1024 * 10
-        with self.assertRaises(cryptography.exceptions.InvalidTag):
+        with self.assertRaises(base.DecryptionError):
             while True:
                 new_data = dec.read(buffer_size)
                 if not new_data:
@@ -171,7 +171,7 @@ class FileEncryptorTest(unittest.TestCase):
         dec.close()
         # decrypt unbuffered
         dec = base.FileDecryptor(path=enc_file, password=self.password)
-        with self.assertRaises(cryptography.exceptions.InvalidTag):
+        with self.assertRaises(base.DecryptionError):
             dec_data = dec.read()
         dec.close()
 
@@ -278,7 +278,7 @@ class FileNameEncryptionTest(unittest.TestCase):
         raw = raw[:10] + b"INVALID" + raw[10:]
         encrypted_name = base64.urlsafe_b64encode(raw)
 
-        with self.assertRaises(cryptography.exceptions.InvalidTag):
+        with self.assertRaises(base.DecryptionError):
             base.decrypt_filename(encrypted_name, password=password)
 
     def test_decrypt_too_short(self):
