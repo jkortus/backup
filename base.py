@@ -177,9 +177,11 @@ class FSDirectory:
         name = pathlib.Path(path).name
         parent = pathlib.Path(path).parent
         directory = cls(name=name, root=parent)
-        if recursive:
-            for dname in dirs:
+        for dname in dirs:
+            if recursive:
                 directory.add_directory(cls.from_filesystem(os.path.join(path, dname)))
+            else:
+                directory.add_directory(FSDirectory(name=dname))
         for fname in files:
             directory.add_file(FSFile(name=fname))
         return directory
