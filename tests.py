@@ -475,6 +475,23 @@ class DirectoryEncryptionTest(unittest.TestCase):
             len(edir.dir_names()), 1, "Non-regular directories were not excluded."
         )
 
+    def test_encrypt_the_same_tree_twice_to_the_same_dest(self):
+        """Test that encrypting the same tree twice to the same destination
+        does not create extra encrypted content (i.e. the same file under
+        a new encrypted name)
+        """
+        self.create_fs_tree(self.source_dir)
+        base.encrypt_directory(self.source_dir, self.encrypted_dir)
+        tree_content = list(os.walk(self.encrypted_dir))
+        base.encrypt_directory(self.source_dir, self.encrypted_dir)
+        tree_content2 = list(os.walk(self.encrypted_dir))
+        self.assertEqual(
+            tree_content,
+            tree_content2,
+            "Encrypted content changed on second run, "
+            "some files were probably not properly skipped.",
+        )
+
 
 class DirectoryComparisonTest(unittest.TestCase):
     """Test directory comparison"""
