@@ -679,7 +679,7 @@ def safe_is_dir(path: str):
             return os.path.isdir(path)
 
 
-def encrypt_directory(source, destination, password, status_reporter=None):
+def encrypt_directory(source, destination):
     """encrypts all files and directories in directory and writes them to destination"""
     global _ENCRYPTION_KEY  # pylint: disable=global-statement
     log.debug(f"encrypt_directory({source} -> {destination})")
@@ -687,7 +687,7 @@ def encrypt_directory(source, destination, password, status_reporter=None):
     # use one key for all files in a run. Different runs (for new files for instance)
     # will use different keys
     if _ENCRYPTION_KEY is None:
-        key = EncryptionKey(password=password)
+        key = EncryptionKey(password=get_password())
         _ENCRYPTION_KEY = key
     else:
         key = _ENCRYPTION_KEY
@@ -833,7 +833,7 @@ def safe_walker(directory: str):
             yield (root, filtered_dirs, filtered_files)
 
 
-def decrypt_directory(source, destination, password):
+def decrypt_directory(source, destination):
     """decrypts all files and directories in directory and writes them to destination"""
     log.debug(f"decrypt_directory({source} -> {destination})")
     safe_makedirs(destination, exist_ok=True)
@@ -850,7 +850,7 @@ def decrypt_directory(source, destination, password):
             f"Existing files: {existing_files}"
         )
         for fname in files:
-            decrypted_filename = decrypt_filename(fname, password=password)
+            decrypted_filename = decrypt_filename(fname)
             abs_fname = os.path.join(root, fname)
             abs_dec_fname = os.path.join(destination, decrypted_filename)
             if decrypted_filename in existing_files:
@@ -859,12 +859,12 @@ def decrypt_directory(source, destination, password):
                 )
                 continue
             log.info(f"Decrypting file {abs_fname} -> {abs_dec_fname}")
-            file_decryptor = FileDecryptor(abs_fname, password=password)
+            file_decryptor = FileDecryptor(abs_fname)
             file_decryptor.decrypt_to_file(os.path.join(destination, abs_dec_fname))
             file_decryptor.close()
         for dname in dirs:
             abs_dname = os.path.join(root, dname)
-            decrypted_dirname = decrypt_filename(dname, password=password)
+            decrypted_dirname = decrypt_filename(dname)
             if decrypted_dirname in existing_dirs:
                 abs_dec_dname = os.path.join(destination, decrypted_dirname)
                 log.info(
@@ -876,7 +876,7 @@ def decrypt_directory(source, destination, password):
                 with safe_cwd_cm(destination):
                     os.mkdir(decrypted_dirname)
             decrypt_directory(
-                source=abs_dname, destination=abs_dec_dname, password=password
+                source=abs_dname, destination=abs_dec_dname
             )
         break  # one level in each call, the rest gets handled in the recurisve calls
 

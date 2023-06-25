@@ -338,9 +338,7 @@ class DirectoryEncryptionTest(unittest.TestCase):
 
     def test_encrypt_empty_directory(self):
         """Test encryption of empty directory"""
-        base.encrypt_directory(
-            self.source_dir, self.encrypted_dir, password=self.password
-        )
+        base.encrypt_directory(self.source_dir, self.encrypted_dir)
         _, dirs, files = next(os.walk(self.encrypted_dir))
         self.assertEqual(dirs, [])
         self.assertEqual(files, [])
@@ -348,9 +346,7 @@ class DirectoryEncryptionTest(unittest.TestCase):
     def test_encrypt_directory(self):
         """Test encryption of directory"""
         self.create_fs_tree(self.source_dir)
-        base.encrypt_directory(
-            self.source_dir, self.encrypted_dir, password=self.password
-        )
+        base.encrypt_directory(self.source_dir, self.encrypted_dir)
         # check that number of files on each level is the same
         # and that the content is not the same (i.e. encrypted)
         source_walker = os.walk(self.source_dir)
@@ -375,12 +371,8 @@ class DirectoryEncryptionTest(unittest.TestCase):
     def test_decrypt_directory(self):
         """encrypt, decrypt and compare with source for one-to-one match across the tree"""
         self.create_fs_tree(self.source_dir)
-        base.encrypt_directory(
-            self.source_dir, self.encrypted_dir, password=self.password
-        )
-        base.decrypt_directory(
-            self.encrypted_dir, self.decrypted_dir, password=self.password
-        )
+        base.encrypt_directory(self.source_dir, self.encrypted_dir)
+        base.decrypt_directory(self.encrypted_dir, self.decrypted_dir)
         source_walker = os.walk(self.source_dir)
         decrypted_walker = os.walk(self.decrypted_dir)
         while True:
@@ -426,8 +418,8 @@ class DirectoryEncryptionTest(unittest.TestCase):
             tfd.write(b"test")
         abs_filename = os.path.join(os.getcwd(), filename)
         log.debug(f"Abs path length of test filename: {len(abs_filename)}")
-        base.encrypt_directory(source_dir, dest_dir, password=self.password)
-        base.decrypt_directory(dest_dir, dec_dir, password=self.password)
+        base.encrypt_directory(source_dir, dest_dir)
+        base.decrypt_directory(dest_dir, dec_dir)
 
         source_walker = os.walk(source_dir)
         decrypted_walker = os.walk(dec_dir)
@@ -474,9 +466,7 @@ class DirectoryEncryptionTest(unittest.TestCase):
         # create fifo
         # os.mkfifo(os.path.join(self.source_dir, "fifo"))
         # fifo and symlinks are enough
-        base.encrypt_directory(
-            self.source_dir, self.encrypted_dir, password=self.password
-        )
+        base.encrypt_directory(self.source_dir, self.encrypted_dir)
         edir = FSDirectory.from_filesystem(self.encrypted_dir)
         self.assertEqual(
             len(edir.file_names()), 1, "Non-regular files were not excluded."
@@ -517,13 +507,12 @@ class DirectoryComparisonTest(unittest.TestCase):
 
     def test_commpare_identical_directories_encrypted(self):
         """test identical encrypted dirs"""
-        password = "test"
         os.mkdir(os.path.join(self.source_dir, "newdir"))
         with open(os.path.join(self.source_dir, "file"), "wb") as tfd:
             tfd.write(b"test")
         with open(os.path.join(self.source_dir, "newdir", "file2"), "wb") as tfd:
             tfd.write(b"test2")
-        base.encrypt_directory(self.source_dir, self.encrypted_dir, password=password)
+        base.encrypt_directory(self.source_dir, self.encrypted_dir)
         dir1 = FSDirectory.from_filesystem(self.encrypted_dir)
         dir2 = FSDirectory.from_filesystem(self.encrypted_dir)
         self.assertIsNone(
@@ -665,9 +654,8 @@ class DirectoryComparisonTest(unittest.TestCase):
 
     def test_encrypt_and_compare(self):
         """encrypts a directory and runs a diff on it"""
-        password = "test"
         dir1 = FSDirectory.from_filesystem(self.source_dir)
-        base.encrypt_directory(self.source_dir, self.encrypted_dir, password)
+        base.encrypt_directory(self.source_dir, self.encrypted_dir)
         dir2 = FSDirectory.from_filesystem(self.encrypted_dir)
         diff = dir1.one_way_diff(dir2)
         self.assertIsNone(diff, "No difference expected on identical directories")
