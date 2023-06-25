@@ -47,6 +47,7 @@ MAX_UNENCRYPTED_FILENAME_LENGTH = (
 _KEYSTORE = {}  # cached keys for detected salts
 _ENCRYPTION_KEY = None  # cached encryption key
 _PASSWORD = None  # cached password
+STATUS_REPORTER = None  # StatusReporter instance for progress monitoring, optional
 
 log.debug(f"Max unencrypted filename length: {MAX_UNENCRYPTED_FILENAME_LENGTH}")
 log.debug(f"Max size of unecrypted input: {MAX_FILE_SIZE} bytes")
@@ -511,22 +512,43 @@ class StatusReporter:
     def __init__(self):
         self.files_processed = 0
         self.files_skipped = 0
+        self.terminal_width = 80
 
-    def action(self, name, *args):
-        """reports an action"""
+    def event(self, name, *args):
+        """reports an event"""
         if name == "encrypt_file":
+            # if self.files_processed == 0:
+            #    print("\n")
             self.files_processed += 1
             # seek at start of the line
-            if self.files_processed == 0:
-                print("\n")
-            print(f"\rEncrypting file {args[0]}", end="")
+            intro = "\rEncrypting file "
+            replacement = "[...]"
+            display_name = args[0]
+            if len(intro + display_name) > self.terminal_width:
+                display_name = (
+                    replacement
+                    + display_name[
+                        -(self.terminal_width - len(intro) - len(replacement)) :
+                    ]
+                )
+            info_line = f"{intro}{display_name}"
+            print(f"{info_line:>{self.terminal_width}}", end="", flush=True)
 
         elif name == "skip_file":
             self.files_skipped += 1
             self.files_processed += 1
-            print(
-                f"\rSkipping file/dir {args[0]} (already encrypted in target)", end=""
-            )
+            intro = "\rSkipping file/dir (already encrypted in target): "
+            replacement = "[...]"
+            display_name = args[0]
+            if len(intro + display_name) > self.terminal_width:
+                display_name = (
+                    replacement
+                    + display_name[
+                        -(self.terminal_width - len(intro) - len(replacement)) :
+                    ]
+                )
+            info_line = f"{intro}{display_name}"
+            print(f"{info_line:>{self.terminal_width}}", end="", flush=True)
 
 
 def _encrypt(key: EncryptionKey, plaintext: bytes):
@@ -720,10 +742,7 @@ def encrypt_directory(source, destination):
                     f"Skipping already encrypted file {abs_fname} "
                     f"-> {existing_files[fname]}"
                 )
-                if status_reporter:
-                    status_reporter.action(
-                        "skip_file", abs_fname, existing_files[fname]
-                    )
+                report_event("skip_file", abs_fname, existing_files[fname])
                 continue
 
             encrypted_filename = encrypt_filename(key, fname).decode("utf-8")
@@ -731,8 +750,7 @@ def encrypt_directory(source, destination):
 
             log.info(f"Encrypting file {os.path.join(source,fname)} -> {abs_enc_fname}")
             file_encryptor = FileEncryptor(abs_fname, key)
-            if status_reporter:
-                status_reporter.action("encrypt_file", abs_fname, abs_enc_fname)
+            report_event("encrypt_file", abs_fname, abs_enc_fname)
             file_encryptor.encrypt_to_file(abs_enc_fname)
             file_encryptor.close()
         for dname in dirs:
@@ -743,8 +761,7 @@ def encrypt_directory(source, destination):
                     f"Skipping already encrypted directory "
                     f"{os.path.join(source,dname)} -> {abs_enc_dname}"
                 )
-                if status_reporter:
-                    status_reporter.action("skip_directory", abs_dname, abs_enc_dname)
+                report_event("skip_directory", abs_dname, abs_enc_dname)
 
             else:
                 encrypted_dirname = encrypt_filename(key, dname).decode("utf-8")
@@ -758,8 +775,6 @@ def encrypt_directory(source, destination):
             encrypt_directory(
                 source=abs_dname,
                 destination=abs_enc_dname,
-                password=password,
-                status_reporter=status_reporter,
             )
         break  # one level in each call, the rest gets handled in the recurisve calls
 
@@ -875,9 +890,7 @@ def decrypt_directory(source, destination):
                 log.info(f"Decrypting directory {abs_dname} -> {abs_dec_dname}")
                 with safe_cwd_cm(destination):
                     os.mkdir(decrypted_dirname)
-            decrypt_directory(
-                source=abs_dname, destination=abs_dec_dname
-            )
+            decrypt_directory(source=abs_dname, destination=abs_dec_dname)
         break  # one level in each call, the rest gets handled in the recurisve calls
 
 
@@ -920,3 +933,13 @@ def is_encrypted(filename: str):
     except Exception:
         # log.debug(f"guessing is_encrypted({filename}) -> False")
         return False
+
+
+def report_event(event: str, *args, **kwargs):
+    """
+    reports events as they are happening from inside various
+    functions for the purpose of progress monitoring
+    """
+    if STATUS_REPORTER is None or not isinstance(STATUS_REPORTER, StatusReporter):
+        return
+    STATUS_REPORTER.event(event, *args, **kwargs)

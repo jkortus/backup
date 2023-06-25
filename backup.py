@@ -50,12 +50,13 @@ def main():
 
     if not args.password:
         args.password = base.get_password()
+    # TODO: private member should not be accessed directly
+    base._PASSWORD = args.password
     status_reporter = base.StatusReporter()
+    base.STATUS_REPORTER = status_reporter
     if args.encrypt:
         try:
-            base.encrypt_directory(
-                args.encrypt[0], args.encrypt[1], args.password, status_reporter
-            )
+            base.encrypt_directory(args.encrypt[0], args.encrypt[1])
             print(
                 f"\nEncryption successfully finished. "
                 f"Encrypted files: {status_reporter.files_processed}"
@@ -67,7 +68,7 @@ def main():
             sys.exit(2)
     elif args.decrypt:
         try:
-            base.decrypt_directory(args.decrypt[0], args.decrypt[1], args.password)
+            base.decrypt_directory(args.decrypt[0], args.decrypt[1])
             print("Decryption successfully finished.")
         except Exception as ex:
             log.exception(ex)
