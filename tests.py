@@ -27,6 +27,24 @@ def fake_fstat_size(descriptor):  # pylint: disable=unused-argument
     return os.stat_result((0, 0, 0, 0, 0, 0, base.MAX_FILE_SIZE + 1, 0, 0, 0))
 
 
+def create_fs_tree(root, depth=2, files_per_dir=3, dirs_per_dir=2):
+    """Create a directory tree for testing"""
+    for i in range(files_per_dir):
+        fname = os.path.join(root, f"file-{depth}-{i}")
+        with open(fname, "w", encoding="utf-8") as tfd:
+            tfd.write(fname)
+    for i in range(dirs_per_dir):
+        dname = os.path.join(root, f"dir-{depth}-{i}")
+        os.mkdir(dname)
+        if depth > 0:
+            create_fs_tree(
+                root=dname,
+                depth=depth - 1,
+                files_per_dir=files_per_dir,
+                dirs_per_dir=dirs_per_dir,
+            )
+
+
 class EncryptionKeyTest(unittest.TestCase):
     """Test encryption key class"""
 
@@ -319,23 +337,6 @@ class DirectoryEncryptionTest(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.root)
 
-    def create_fs_tree(self, root, depth=2, files_per_dir=3, dirs_per_dir=2):
-        """Create a directory tree for testing"""
-        for i in range(files_per_dir):
-            fname = os.path.join(root, f"file-{depth}-{i}")
-            with open(fname, "w", encoding="utf-8") as tfd:
-                tfd.write(fname)
-        for i in range(dirs_per_dir):
-            dname = os.path.join(root, f"dir-{depth}-{i}")
-            os.mkdir(dname)
-            if depth > 0:
-                self.create_fs_tree(
-                    root=dname,
-                    depth=depth - 1,
-                    files_per_dir=files_per_dir,
-                    dirs_per_dir=dirs_per_dir,
-                )
-
     def test_encrypt_empty_directory(self):
         """Test encryption of empty directory"""
         base.encrypt_directory(self.source_dir, self.encrypted_dir)
@@ -345,7 +346,7 @@ class DirectoryEncryptionTest(unittest.TestCase):
 
     def test_encrypt_directory(self):
         """Test encryption of directory"""
-        self.create_fs_tree(self.source_dir)
+        create_fs_tree(self.source_dir)
         base.encrypt_directory(self.source_dir, self.encrypted_dir)
         # check that number of files on each level is the same
         # and that the content is not the same (i.e. encrypted)
@@ -370,7 +371,7 @@ class DirectoryEncryptionTest(unittest.TestCase):
 
     def test_decrypt_directory(self):
         """encrypt, decrypt and compare with source for one-to-one match across the tree"""
-        self.create_fs_tree(self.source_dir)
+        create_fs_tree(self.source_dir)
         base.encrypt_directory(self.source_dir, self.encrypted_dir)
         base.decrypt_directory(self.encrypted_dir, self.decrypted_dir)
         source_walker = os.walk(self.source_dir)
@@ -480,7 +481,7 @@ class DirectoryEncryptionTest(unittest.TestCase):
         does not create extra encrypted content (i.e. the same file under
         a new encrypted name)
         """
-        self.create_fs_tree(self.source_dir)
+        create_fs_tree(self.source_dir)
         base.encrypt_directory(self.source_dir, self.encrypted_dir)
         tree_content = list(os.walk(self.encrypted_dir))
         base.encrypt_directory(self.source_dir, self.encrypted_dir)
@@ -776,6 +777,59 @@ class FSDirectoryTest(unittest.TestCase):
             ValueError, msg="Adding already existing name should raise ValueError"
         ):
             dir1.add_directory(FSDirectory("file1"))
+
+
+class StatusReporterTest(unittest.TestCase):
+    """Test status reporter"""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="backup-test-")
+
+    def tearDown(self):
+        shutil.rmtree(self.root)
+
+    def test_encryption_status_reporter(self):
+        """test encryption status reporter"""
+        source_dir = os.path.join(self.root, "source")
+        encrypted_dir = os.path.join(self.root, "encrypted")
+        os.mkdir(source_dir)
+        os.mkdir(encrypted_dir)
+        create_fs_tree(source_dir)
+        reporter = base.StatusReporter()
+        base.STATUS_REPORTER = reporter
+        base.encrypt_directory(source_dir, encrypted_dir)
+        encrypted_count = reporter.files_processed
+        self.assertGreater(encrypted_count, 0, "Encrypted files were not reported")
+        base.encrypt_directory(source_dir, encrypted_dir)
+        self.assertEqual(
+            reporter.files_processed,  # all skipped will be processed again
+            reporter.files_skipped
+            * 2,  # only skips from the second run will be counted
+            "Skipped and processed counts must match on second run.",
+        )
+
+    def test_decryption_status_reporter(self):
+        """test decryption status reporter"""
+        source_dir = os.path.join(self.root, "source")
+        encrypted_dir = os.path.join(self.root, "encrypted")
+        decrypted_dir = os.path.join(self.root, "decrypted")
+        os.mkdir(source_dir)
+        os.mkdir(encrypted_dir)
+        os.mkdir(decrypted_dir)
+        create_fs_tree(source_dir)
+        base.encrypt_directory(source_dir, encrypted_dir)
+        reporter = base.StatusReporter()
+        base.STATUS_REPORTER = reporter
+        base.decrypt_directory(encrypted_dir, decrypted_dir)
+        decrypted_count = reporter.files_processed
+        self.assertGreater(decrypted_count, 0, "Decrypted files were not reported")
+        base.decrypt_directory(encrypted_dir, decrypted_dir)
+        self.assertEqual(
+            reporter.files_processed,  # all skipped will be processed again
+            reporter.files_skipped
+            * 2,  # only skips from the second run will be counted
+            "Skipped and processed counts must match on second run.",
+        )
 
 
 if __name__ == "__main__":
