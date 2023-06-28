@@ -69,7 +69,11 @@ def main():
     elif args.decrypt:
         try:
             base.decrypt_directory(args.decrypt[0], args.decrypt[1])
-            print("Decryption successfully finished.")
+            print(
+                f"\nEncryption successfully finished. "
+                f"Decrypted files: {status_reporter.files_processed}"
+                f" Skipped files: {status_reporter.files_skipped}"
+            )
         except Exception as ex:
             log.exception(ex)
             print("Error: " + str(ex), file=sys.stderr)

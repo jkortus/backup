@@ -536,6 +536,24 @@ class StatusReporter:
             info_line = f"{intro}{display_name}"
             print(f"{info_line:>{self.terminal_width}}", end="", flush=True)
 
+        if name == "decrypt_file":
+            # if self.files_processed == 0:
+            #    print("\n")
+            self.files_processed += 1
+            # seek at start of the line
+            intro = "\rDecrypting file "
+            replacement = "[...]"
+            display_name = args[0]
+            if len(intro + display_name) > self.terminal_width:
+                display_name = (
+                    replacement
+                    + display_name[
+                        -(self.terminal_width - len(intro) - len(replacement)) :
+                    ]
+                )
+            info_line = f"{intro}{display_name}"
+            print(f"{info_line:>{self.terminal_width}}", end="", flush=True)
+
         elif name == "skip_file":
             self.files_skipped += 1
             self.files_processed += 1
@@ -551,6 +569,8 @@ class StatusReporter:
                 )
             info_line = f"{intro}{display_name}"
             print(f"{info_line:>{self.terminal_width}}", end="", flush=True)
+        else:
+            log.debug(f"Unknown event ignored: {name} {args}")
 
 
 def _encrypt(key: EncryptionKey, plaintext: bytes):
@@ -747,10 +767,9 @@ def encrypt_directory(source, destination):
                 report_event("skip_file", abs_fname, existing_files[fname])
                 continue
 
+            log.info(f"Encrypting file {os.path.join(source,fname)} -> {abs_enc_fname}")
             encrypted_filename = encrypt_filename(key, fname).decode("utf-8")
             abs_enc_fname = os.path.join(destination, encrypted_filename)
-
-            log.info(f"Encrypting file {os.path.join(source,fname)} -> {abs_enc_fname}")
             file_encryptor = FileEncryptor(abs_fname, key)
             report_event("encrypt_file", abs_fname, abs_enc_fname)
             file_encryptor.encrypt_to_file(abs_enc_fname)
@@ -772,6 +791,7 @@ def encrypt_directory(source, destination):
                     f"Encrypting directory {os.path.join(source,dname)} -> "
                     f"{abs_enc_dname}"
                 )
+                report_event("encrypt_directory", abs_dname, abs_enc_dname)
                 with safe_cwd_cm(destination):
                     os.mkdir(encrypted_dirname)
             encrypt_directory(
@@ -874,8 +894,10 @@ def decrypt_directory(source, destination):
                 log.info(
                     f"Skipping already decrypted file {abs_fname} -> {abs_dec_fname}"
                 )
+                report_event("skip_file", abs_fname, abs_dec_fname)
                 continue
             log.info(f"Decrypting file {abs_fname} -> {abs_dec_fname}")
+            report_event("decrypt_file", abs_fname, abs_dec_fname)
             file_decryptor = FileDecryptor(abs_fname)
             file_decryptor.decrypt_to_file(os.path.join(destination, abs_dec_fname))
             file_decryptor.close()
@@ -887,9 +909,11 @@ def decrypt_directory(source, destination):
                 log.info(
                     f"Skipping already decrypted directory {abs_dname} -> {abs_dec_dname}"
                 )
+                report_event("skip_directory", abs_dname, abs_dec_dname)
             else:
                 abs_dec_dname = os.path.join(destination, decrypted_dirname)
                 log.info(f"Decrypting directory {abs_dname} -> {abs_dec_dname}")
+                report_event("decrypt_directory", abs_dname, abs_dec_dname)
                 with safe_cwd_cm(destination):
                     os.mkdir(decrypted_dirname)
             decrypt_directory(source=abs_dname, destination=abs_dec_dname)
