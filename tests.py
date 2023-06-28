@@ -45,6 +45,24 @@ def create_fs_tree(root, depth=2, files_per_dir=3, dirs_per_dir=2):
             )
 
 
+def create_fs_tree_from_dict(root, tree):
+    """
+    Create a directory tree for testing from a dictionary.
+    Dictionary format: {filename: content} or {dirname: {filename: content}},
+    nested: {dirname: {dirname: {filename: content}}}
+
+    """
+    for name, content in tree.items():
+        if isinstance(content, dict):
+            dname = os.path.join(root, name)
+            os.mkdir(dname)
+            create_fs_tree_from_dict(dname, content)
+        else:
+            fname = os.path.join(root, name)
+            with open(fname, "w", encoding="utf-8") as tfd:
+                tfd.write(content)
+
+
 class EncryptionKeyTest(unittest.TestCase):
     """Test encryption key class"""
 
@@ -777,6 +795,158 @@ class FSDirectoryTest(unittest.TestCase):
             ValueError, msg="Adding already existing name should raise ValueError"
         ):
             dir1.add_directory(FSDirectory("file1"))
+
+
+class FSDirectoryFilesystemParsingTest(unittest.TestCase):
+    """
+    Tests for file system parsing function of FSDirectory class
+    """
+
+    def setUp(self) -> None:
+        self.root = tempfile.mkdtemp(prefix="backup-test-")
+        self.source_dir = os.path.join(self.root, "source")
+        self.encrypted_dir = os.path.join(self.root, "encrypted")
+        self.decrypted_dir = os.path.join(self.root, "decrypted")
+        os.mkdir(self.source_dir)
+        os.mkdir(self.encrypted_dir)
+        os.mkdir(self.decrypted_dir)
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.root)
+
+    def test_empty_directory(self):
+        """test empty directory"""
+        dir1 = FSDirectory.from_filesystem(self.source_dir)
+        self.assertEqual(dir1.name, os.path.basename(self.source_dir))
+        self.assertEqual(dir1.dir_names(), set([]))
+        self.assertEqual(dir1.file_names(), set([]))
+
+    def test_directory_with_one_file(self):
+        """test directory with one file"""
+        with open(os.path.join(self.source_dir, "file1"), "wb") as tfd:
+            tfd.write(b"test")
+        dir1 = FSDirectory.from_filesystem(self.source_dir)
+        self.assertEqual(dir1.name, os.path.basename(self.source_dir))
+        self.assertEqual(dir1.dir_names(), set([]))
+        self.assertEqual(dir1.file_names(), set(["file1"]))
+
+    def test_directory_with_one_directory(self):
+        """test directory with one directory"""
+        os.mkdir(os.path.join(self.source_dir, "dir1"))
+        dir1 = FSDirectory.from_filesystem(self.source_dir)
+        self.assertEqual(dir1.name, os.path.basename(self.source_dir))
+        self.assertEqual(dir1.dir_names(), set(["dir1"]))
+        self.assertEqual(dir1.file_names(), set([]))
+
+    def test_directory_with_one_file_and_one_directory(self):
+        """test directory with one file and one directory"""
+        os.mkdir(os.path.join(self.source_dir, "dir1"))
+        with open(os.path.join(self.source_dir, "file1"), "wb") as tfd:
+            tfd.write(b"test")
+        dir1 = FSDirectory.from_filesystem(self.source_dir)
+        self.assertEqual(dir1.name, os.path.basename(self.source_dir))
+        self.assertEqual(dir1.dir_names(), set(["dir1"]))
+        self.assertEqual(dir1.file_names(), set(["file1"]))
+
+    def test_parse_plaintext_tree(self):
+        """tests parsing functionality of to-be-encrypted trees"""
+        tree = {
+            "dir1": {"dir-1-1": {}, "dir-1-2": {"file-1-2": "test"}, "file1": "test"},
+            "dir2": {"file2": "test2"},
+            "file3": "test3",
+        }
+        create_fs_tree_from_dict(self.source_dir, tree)
+        parsed_dir = FSDirectory.from_filesystem(self.source_dir)
+        self.assertEqual(parsed_dir.dir_names(), set(["dir1", "dir2"]))
+        self.assertEqual(parsed_dir.file_names(), set(["file3"]))
+        dir1_1 = parsed_dir.get_directory("dir1")
+        self.assertEqual(dir1_1.dir_names(), set(["dir-1-1", "dir-1-2"]))
+        self.assertEqual(dir1_1.file_names(), set(["file1"]))
+        dir1_2 = dir1_1.get_directory("dir-1-2")
+        self.assertEqual(dir1_2.dir_names(), set([]))
+        self.assertEqual(dir1_2.file_names(), set(["file-1-2"]))
+        dir2 = parsed_dir.get_directory("dir2")
+        self.assertEqual(dir2.dir_names(), set([]))
+        self.assertEqual(dir2.file_names(), set(["file2"]))
+
+    def test_parse_plaintext_tree_nonrecursive(self):
+        """
+        tests parsing functionality of to-be-encrypted trees
+        non-recurisve
+        """
+        tree = {
+            "dir1": {"dir-1-1": {}, "dir-1-2": {"file-1-2": "test"}, "file1": "test"},
+            "dir2": {"file2": "test2"},
+            "file3": "test3",
+        }
+        create_fs_tree_from_dict(self.source_dir, tree)
+        parsed_dir = FSDirectory.from_filesystem(self.source_dir, recursive=False)
+        # first level has all items
+        self.assertEqual(parsed_dir.dir_names(), set(["dir1", "dir2"]))
+        self.assertEqual(parsed_dir.file_names(), set(["file3"]))
+        # those items must be empty though (no recursion requirement)
+        dir1_1 = parsed_dir.get_directory("dir1")
+        self.assertEqual(dir1_1.dir_names(), set([]))
+        self.assertEqual(dir1_1.file_names(), set([]))
+        dir1_2 = parsed_dir.get_directory("dir2")
+        self.assertEqual(dir1_2.dir_names(), set([]))
+        self.assertEqual(dir1_2.file_names(), set([]))
+
+    def test_parse_encrypted_tree(self):
+        """tests parsing functionality of encrypted trees"""
+        tree = {
+            "dir1": {"dir-1-1": {}, "dir-1-2": {"file-1-2": "test"}, "file1": "test"},
+            "dir2": {"file2": "test2"},
+            "file3": "test3",
+        }
+        create_fs_tree_from_dict(self.source_dir, tree)
+        base.encrypt_directory(self.source_dir, self.encrypted_dir)
+        parsed_dir = FSDirectory.from_filesystem(self.encrypted_dir)
+        self.assertFalse(parsed_dir.is_encrypted)  # target dir is plaintext normally
+        self.assertEqual(parsed_dir.dir_names(), set(["dir1", "dir2"]))
+        self.assertEqual(parsed_dir.file_names(), set(["file3"]))
+        dir1_1 = parsed_dir.get_directory("dir1")
+        self.assertTrue(dir1_1.is_encrypted)
+        self.assertNotEqual(dir1_1.name, dir1_1.decrypted_name)
+        self.assertEqual(dir1_1.dir_names(), set(["dir-1-1", "dir-1-2"]))
+        self.assertEqual(dir1_1.file_names(), set(["file1"]))
+        dir1_2 = dir1_1.get_directory("dir-1-2")
+        self.assertNotEqual(dir1_2.name, dir1_2.decrypted_name)
+        self.assertTrue(dir1_2.is_encrypted)
+        self.assertEqual(dir1_2.dir_names(), set([]))
+        self.assertEqual(dir1_2.file_names(), set(["file-1-2"]))
+        dir2 = parsed_dir.get_directory("dir2")
+        self.assertNotEqual(dir2.name, dir2.decrypted_name)
+        self.assertTrue(dir2.is_encrypted)
+        self.assertEqual(dir2.dir_names(), set([]))
+        self.assertEqual(dir2.file_names(), set(["file2"]))
+
+    def test_parse_encrypted_tree_nonrecursive(self):
+        """
+        tests parsing functionality of encrypted trees
+        non-recursive
+        """
+        tree = {
+            "dir1": {"dir-1-1": {}, "dir-1-2": {"file-1-2": "test"}, "file1": "test"},
+            "dir2": {"file2": "test2"},
+            "file3": "test3",
+        }
+        create_fs_tree_from_dict(self.source_dir, tree)
+        base.encrypt_directory(self.source_dir, self.encrypted_dir)
+        parsed_dir = FSDirectory.from_filesystem(self.encrypted_dir, recursive=False)
+        self.assertFalse(parsed_dir.is_encrypted)  # target dir is plaintext normally
+        self.assertEqual(parsed_dir.dir_names(), set(["dir1", "dir2"]))
+        self.assertEqual(parsed_dir.file_names(), set(["file3"]))
+        dir1_1 = parsed_dir.get_directory("dir1")
+        self.assertTrue(dir1_1.is_encrypted)
+        self.assertNotEqual(dir1_1.name, dir1_1.decrypted_name)
+        self.assertEqual(dir1_1.dir_names(), set([]))
+        self.assertEqual(dir1_1.file_names(), set([]))
+        dir1_2 = parsed_dir.get_directory("dir2")
+        self.assertTrue(dir1_2.is_encrypted)
+        self.assertNotEqual(dir1_2.name, dir1_2.decrypted_name)
+        self.assertEqual(dir1_2.dir_names(), set([]))
+        self.assertEqual(dir1_2.file_names(), set([]))
 
 
 class StatusReporterTest(unittest.TestCase):
