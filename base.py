@@ -767,9 +767,9 @@ def encrypt_directory(source, destination):
                 report_event("skip_file", abs_fname, existing_files[fname])
                 continue
 
-            log.info(f"Encrypting file {os.path.join(source,fname)} -> {abs_enc_fname}")
             encrypted_filename = encrypt_filename(key, fname).decode("utf-8")
             abs_enc_fname = os.path.join(destination, encrypted_filename)
+            log.info(f"Encrypting file {os.path.join(source,fname)} -> {abs_enc_fname}")
             file_encryptor = FileEncryptor(abs_fname, key)
             report_event("encrypt_file", abs_fname, abs_enc_fname)
             file_encryptor.encrypt_to_file(abs_enc_fname)
