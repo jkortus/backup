@@ -348,12 +348,16 @@ class DirectoryEncryptionTest(unittest.TestCase):
         self.encrypted_dir = os.path.join(self.root, "encrypted")
         self.decrypted_dir = os.path.join(self.root, "decrypted")
         self.password = "test"
+        self.cwd = os.getcwd()
         os.mkdir(self.source_dir)
         os.mkdir(self.encrypted_dir)
         os.mkdir(self.decrypted_dir)
 
     def tearDown(self):
         shutil.rmtree(self.root)
+        # return back to original, as some of our tests might change
+        # the cwd and delete it afterwards
+        os.chdir(self.cwd)
 
     def test_encrypt_empty_directory(self):
         """Test encryption of empty directory"""
