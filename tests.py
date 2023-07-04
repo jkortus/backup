@@ -91,7 +91,6 @@ class FileEncryptorTest(unittest.TestCase):
         self.test_data = b"test" * 1024 * 1024
         with open(self.test_file, "wb") as tfd:
             tfd.write(self.test_data)
-        self.password = "test"
 
     def get_temp_file(self, prefix=""):
         """Get a temporary file path"""
@@ -105,7 +104,7 @@ class FileEncryptorTest(unittest.TestCase):
 
     def test_encrypt_file(self):
         """Test encryption of file"""
-        key = EncryptionKey(password=self.password)
+        key = base.get_key()
         # encrypt buffered
         encryptor = base.FileEncryptor(path=self.test_file, key=key)
         encrypted_data = b""
@@ -126,7 +125,7 @@ class FileEncryptorTest(unittest.TestCase):
 
     def test_decrypt_file(self):
         """Test decryption of file"""
-        key = EncryptionKey(password=self.password)
+        key = base.get_key()
         enc_buf = base.FileEncryptor(path=self.test_file, key=key)
         enc_buf_file = self.get_temp_file()
         buffer_size = 1024 * 10
@@ -148,7 +147,7 @@ class FileEncryptorTest(unittest.TestCase):
         enc_unbuf.close()
 
         # decrypt
-        dec_buf = base.FileDecryptor(path=enc_buf_file, password=self.password)
+        dec_buf = base.FileDecryptor(path=enc_buf_file)
         dec_buf_data = b""
         while True:
             new_data = dec_buf.read(buffer_size)
@@ -156,7 +155,7 @@ class FileEncryptorTest(unittest.TestCase):
                 break
             dec_buf_data += new_data
         dec_buf.close()
-        dec_unbuf = base.FileDecryptor(path=enc_unbuf_file, password=self.password)
+        dec_unbuf = base.FileDecryptor(path=enc_unbuf_file)
         dec_unbuf_data = dec_unbuf.read()
         dec_unbuf.close()
         self.assertEqual(
@@ -170,13 +169,13 @@ class FileEncryptorTest(unittest.TestCase):
 
     def test_encrypt_to_file(self):
         """Test encryption of file to file"""
-        key = EncryptionKey(password=self.password)
+        key = base.get_key()
         enc_file = self.get_temp_file()
         enc = base.FileEncryptor(path=self.test_file, key=key)
         enc.encrypt_to_file(enc_file, overwrite=True)
         enc.close()
         # decrypt
-        dec = base.FileDecryptor(path=enc_file, password=self.password)
+        dec = base.FileDecryptor(path=enc_file)
         dec_data = dec.read()
         dec.close()
         self.assertEqual(
@@ -185,7 +184,7 @@ class FileEncryptorTest(unittest.TestCase):
 
     def test_invalid_data_decryption(self):
         """Test decryption of invalid data"""
-        key = EncryptionKey(password=self.password)
+        key = base.get_key()
         enc_file = self.get_temp_file()
         enc = base.FileEncryptor(path=self.test_file, key=key)
         enc.encrypt_to_file(enc_file, overwrite=True)
@@ -195,7 +194,7 @@ class FileEncryptorTest(unittest.TestCase):
             tfd.seek(0)
             tfd.write(b"invalid")
         # decrypt buffered
-        dec = base.FileDecryptor(path=enc_file, password=self.password)
+        dec = base.FileDecryptor(path=enc_file)
         dec_data = b""
         buffer_size = 1024 * 10
         with self.assertRaises(base.DecryptionError):
@@ -206,14 +205,14 @@ class FileEncryptorTest(unittest.TestCase):
                 dec_data += new_data
         dec.close()
         # decrypt unbuffered
-        dec = base.FileDecryptor(path=enc_file, password=self.password)
+        dec = base.FileDecryptor(path=enc_file)
         with self.assertRaises(base.DecryptionError):
             dec_data = dec.read()
         dec.close()
 
     def test_plaintext_not_in_encrypted_data(self):
         """Test that the plaintext is not in the encrypted data"""
-        key = EncryptionKey(password=self.password)
+        key = base.get_key()
         encryptor = base.FileEncryptor(path=self.test_file, key=key)
         encrypted_data = encryptor.read()
         encryptor.close()
@@ -224,11 +223,11 @@ class FileEncryptorTest(unittest.TestCase):
         """Test decryption of empty file"""
         enc_file = self.get_temp_file()
         with self.assertRaises(IOError):
-            base.FileDecryptor(path=enc_file, password=self.password)
+            base.FileDecryptor(path=enc_file)
 
     def test_encrypt_existing_file_overwrite(self):
         """Test encryption of existing file with overwrite flag"""
-        key = EncryptionKey(password=self.password)
+        key = base.get_key()
         orig_data = b"original data"
         enc_file = self.get_temp_file()
         with open(enc_file, "wb") as tfd:
@@ -247,12 +246,12 @@ class FileEncryptorTest(unittest.TestCase):
 
     def test_decrypt_existing_file_overwrite(self):
         """Test decryption of existing file with overwrite flag"""
-        key = EncryptionKey(password=self.password)
+        key = base.get_key()
         enc_file = self.get_temp_file()
         enc = base.FileEncryptor(path=self.test_file, key=key)
         enc.encrypt_to_file(enc_file, overwrite=True)
         enc.close()
-        dec = base.FileDecryptor(path=enc_file, password=self.password)
+        dec = base.FileDecryptor(path=enc_file)
         dest_file = self.get_temp_file()
         orig_data = b"original data"
         with open(dest_file, "wb") as tfd:
@@ -260,7 +259,7 @@ class FileEncryptorTest(unittest.TestCase):
         with self.assertRaises(OSError):
             dec.decrypt_to_file(dest_file)
         dec.close()
-        dec = base.FileDecryptor(path=enc_file, password=self.password)
+        dec = base.FileDecryptor(path=enc_file)
         dec.decrypt_to_file(dest_file, overwrite=True)
         dec.close()
         with open(dest_file, "rb") as tfd:
@@ -270,14 +269,14 @@ class FileEncryptorTest(unittest.TestCase):
     def test_filename_too_long_for_encryption(self):
         """Test that a filename that is too long for encryption raises an error"""
         filename = "x" * (base.MAX_FILENAME_LENGTH + 1)
-        key = EncryptionKey(password=self.password)
+        key = base.get_key()
         with self.assertRaises(ValueError):
             base.encrypt_filename(key, filename)
 
     @patch("os.fstat", fake_fstat_size)
     def test_file_too_big_to_encrypt(self):
         """Tests that encryption attempt of too large file raises an error"""
-        key = EncryptionKey(password=self.password)
+        key = base.get_key()
         encryptor = base.FileEncryptor(path=self.test_file, key=key)
         with self.assertRaises(
             IOError,
@@ -295,19 +294,15 @@ class FileNameEncryptionTest(unittest.TestCase):
 
     def test_encrypt_filename(self):
         """Test encryption of filename"""
-        password = "test"
-        key = EncryptionKey(password=password)
+        key = base.get_key()
         filename = "test.txt"
         encrypted_name = base.encrypt_filename(key, filename)
         self.assertNotEqual(filename, encrypted_name)
-        self.assertEqual(
-            filename, base.decrypt_filename(encrypted_name, password=password)
-        )
+        self.assertEqual(filename, base.decrypt_filename(encrypted_name))
 
     def test_decrypt_corrupted_filename(self):
         """Test decryption of corrupted filename"""
-        password = "test"
-        key = EncryptionKey(password=password)
+        key = base.get_key()
         filename = "test.txt"
         encrypted_name = base.encrypt_filename(key, filename)
         raw = base64.urlsafe_b64decode(encrypted_name)
@@ -315,27 +310,28 @@ class FileNameEncryptionTest(unittest.TestCase):
         encrypted_name = base64.urlsafe_b64encode(raw)
 
         with self.assertRaises(base.DecryptionError):
-            base.decrypt_filename(encrypted_name, password=password)
+            base.decrypt_filename(encrypted_name)
 
     def test_decrypt_too_short(self):
         """Test decryption of too short filename"""
         filename = b"test"
         invalid_crypto_data = base64.urlsafe_b64encode(filename)
         with self.assertRaises(ValueError):
-            base.decrypt_filename(invalid_crypto_data, password="test")
+            base.decrypt_filename(invalid_crypto_data)
 
     def test_filename_too_long(self):
         """Test that a filename that is too long for encryption raises an error"""
         filename = "x" * (base.MAX_UNENCRYPTED_FILENAME_LENGTH + 1)
         with self.assertRaises(ValueError):
-            base.encrypt_filename(EncryptionKey(password="test"), filename)
+            base.encrypt_filename(base.get_key(), filename)
 
     def test_filename_at_max_length(self):
         """Test that a filename at the max length is encrypted"""
         filename = "x" * base.MAX_UNENCRYPTED_FILENAME_LENGTH
-        encrypted = base.encrypt_filename(EncryptionKey(password="test"), filename)
+        key = base.get_key()
+        encrypted = base.encrypt_filename(key, filename)
         self.assertNotEqual(filename, encrypted)
-        self.assertEqual(filename, base.decrypt_filename(encrypted, password="test"))
+        self.assertEqual(filename, base.decrypt_filename(encrypted))
         self.assertLessEqual(len(encrypted), base.MAX_FILENAME_LENGTH)
 
 
@@ -347,7 +343,6 @@ class DirectoryEncryptionTest(unittest.TestCase):
         self.source_dir = os.path.join(self.root, "source")
         self.encrypted_dir = os.path.join(self.root, "encrypted")
         self.decrypted_dir = os.path.join(self.root, "decrypted")
-        self.password = "test"
         self.cwd = os.getcwd()
         os.mkdir(self.source_dir)
         os.mkdir(self.encrypted_dir)
@@ -524,7 +519,6 @@ class DirectoryComparisonTest(unittest.TestCase):
         self.source_dir = os.path.join(self.root, "source")
         self.encrypted_dir = os.path.join(self.root, "encrypted")
         self.decrypted_dir = os.path.join(self.root, "decrypted")
-        self.password = "test"
         os.mkdir(self.source_dir)
         os.mkdir(self.encrypted_dir)
         os.mkdir(self.decrypted_dir)

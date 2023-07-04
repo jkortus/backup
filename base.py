@@ -64,7 +64,7 @@ class FSFile:
         self.name = name
         self.is_encrypted = is_encrypted(self.name)
         if self.is_encrypted:
-            self.decrypted_name = decrypt_filename(self.name, password=get_password())
+            self.decrypted_name = decrypt_filename(self.name)
 
 
 class FSDirectory:
@@ -77,7 +77,7 @@ class FSDirectory:
         self.directories = []
         self.is_encrypted = is_encrypted(self.name)
         if self.is_encrypted:
-            self.decrypted_name = decrypt_filename(self.name, password=get_password())
+            self.decrypted_name = decrypt_filename(self.name)
 
     def add_directory(self, directory: Self):
         """adds a directory (FSDirectory) to the directory tree"""
@@ -220,11 +220,7 @@ class FSDirectory:
                     result.add_directory(subresult)
 
         for fname in other.file_names():
-            filename = (
-                fname
-                if not is_encrypted(fname)
-                else decrypt_filename(fname, password=get_password())
-            )
+            filename = fname if not is_encrypted(fname) else decrypt_filename(fname)
             if filename not in self.file_names():
                 if result is None:
                     result = self.__class__(name=self.name, root=self.root)
@@ -399,7 +395,7 @@ class FileDecryptor:
     """
 
     # pylint: disable=invalid-name
-    def __init__(self, path: str, password: str | None = None):
+    def __init__(self, path: str):
         self.path = path
         self._fd = None
         self.finalized = False
@@ -418,12 +414,10 @@ class FileDecryptor:
                 f"File size {os.path.getsize(path)} of {path} is too small to be decrypted."
                 "Could not get all crypto metadata."
             )
-        self._init_crypto(password=password)
+        self._init_crypto()
 
-    def _init_crypto(self, password: str | None = None):
+    def _init_crypto(self):
         """Inits crypto material based on the content of the file and caches the key"""
-        if password is None:
-            password = get_password()
         dirname = str(pathlib.Path(self.path).parent)
         filename = str(pathlib.Path(self.path).name)
         with safe_cwd_cm(dirname):
@@ -433,11 +427,7 @@ class FileDecryptor:
         self.iv = self._fd.read(IV_SIZE_BYTES)
         salt = self._fd.read(SALT_SIZE_BYTES)
         self._fd.seek(0)
-        if _KEYSTORE.get(salt):
-            self.key = _KEYSTORE[salt]
-        else:
-            self.key = EncryptionKey(password=password, salt=salt)
-            _KEYSTORE[salt] = self.key
+        self.key = get_key(salt=salt)
 
         self.decryptor = Cipher(
             algorithms.AES256(self.key.key),
@@ -630,11 +620,9 @@ def encrypt_filename(key: EncryptionKey, plaintext: str) -> bytes:
     return result
 
 
-def decrypt_filename(encrypted_filename: bytes, password=None) -> str:
+def decrypt_filename(encrypted_filename: bytes) -> str:
     """Decrypts a filename with the given key and returns a base64 encoded string"""
     # pylint: disable=invalid-name
-    if password is None:
-        password = get_password()
     try:
         decoded = base64.urlsafe_b64decode(encrypted_filename)
     except Exception as ex:
@@ -665,14 +653,7 @@ def decrypt_filename(encrypted_filename: bytes, password=None) -> str:
         + SALT_SIZE_BYTES
         + header_len
     ]
-    try:
-        key = _KEYSTORE[salt]
-    except KeyError:
-        log.debug(
-            f"Generating decryption key for salt {salt}, triggered by {encrypted_filename}"
-        )
-        key = EncryptionKey(password=password, salt=salt)
-        _KEYSTORE[salt] = key
+    key = get_key(salt=salt)
     ciphertext = decoded[
         IV_SIZE_BYTES + TAG_SIZE_BYTES + SALT_SIZE_BYTES + header_len :
     ]
@@ -725,16 +706,11 @@ def safe_is_dir(path: str):
 
 def encrypt_directory(source, destination):
     """encrypts all files and directories in directory and writes them to destination"""
-    global _ENCRYPTION_KEY  # pylint: disable=global-statement
     log.debug(f"encrypt_directory({source} -> {destination})")
     safe_makedirs(destination, exist_ok=True)
     # use one key for all files in a run. Different runs (for new files for instance)
     # will use different keys
-    if _ENCRYPTION_KEY is None:
-        key = EncryptionKey(password=get_password())
-        _ENCRYPTION_KEY = key
-    else:
-        key = _ENCRYPTION_KEY
+    key = get_key()
     if not safe_is_dir(source):
         raise ValueError(f"Directory {source} does not exist or is not a directory")
 
@@ -944,6 +920,27 @@ def get_password():
         password = getpass.getpass(prompt="Password: ")
         _PASSWORD = password
         return password
+
+
+def get_key(salt: bytes | None = None) -> EncryptionKey:
+    """
+    returns EncryptionKey object
+    Creates new EncryptionKey if one is not yet cached, prompting for password.
+    If salt is provided, it will be used to generate a new key or to fetch
+    an existing cached key from internal keystore.
+    """
+    global _ENCRYPTION_KEY  # pylint: disable=global-statement
+    if salt is not None:
+        if _KEYSTORE.get(salt):
+            return _KEYSTORE[salt]
+        else:
+            log.debug(f"Generating decryption key for salt {salt}")
+            key = EncryptionKey(password=get_password(), salt=salt)
+            _KEYSTORE[salt] = key
+            return key
+    if _ENCRYPTION_KEY is None:
+        _ENCRYPTION_KEY = EncryptionKey(password=get_password())
+    return _ENCRYPTION_KEY
 
 
 def is_encrypted(filename: str):
