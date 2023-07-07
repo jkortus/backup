@@ -2,12 +2,21 @@
 import os
 import base64
 import logging
-from contextlib import contextmanager
 from typing import Self
 import pathlib
 import copy
 import getpass
 from copy import deepcopy
+import filesystems
+from filesystems import (
+    safe_is_dir,
+    safe_cwd_cm,
+    safe_walker,
+    get_safe_path_segments,
+    safe_makedirs,
+    MAX_PATH_LENGTH,
+    MAX_FILENAME_LENGTH,
+)
 
 # pylint: disable=logging-fstring-interpolation
 import cryptography.exceptions
@@ -20,7 +29,8 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 logging.basicConfig(level=logging.CRITICAL)
 log = logging.getLogger(__name__)
-
+log.setLevel(logging.CRITICAL)
+filesystems.log.setLevel(logging.CRITICAL)
 
 SCRYPT_N = 2**14
 BUFFER_SIZE_BYTES = 4 * 1024 * 1024
@@ -28,11 +38,9 @@ IV_SIZE_BYTES = 12
 TAG_SIZE_BYTES = 16
 SALT_SIZE_BYTES = 16
 
-# file system limits
-MAX_FILENAME_LENGTH = 255
 # https://en.wikipedia.org/wiki/Galois/Counter_Mode
 MAX_FILE_SIZE = int((2**39 - 256) / 8)
-MAX_PATH_LENGTH = 4096
+
 # base64 encoded output is always multiple of 4 bytes
 # its 6 to 8 bits encoding
 # int(a/b) * b = floor(a/b) :)
@@ -284,21 +292,6 @@ class EncryptionKey:
             p=1,
         )
         kdf.verify(password.encode("utf-8"), self.key)
-
-
-def get_safe_path_segments(path: str) -> list[str]:
-    """splits path into segments that are below MAX_PATH_LENGTH"""
-    path_segments = list(pathlib.Path(path).parts)
-    safe_path_segments = []
-    current_segment = ""
-    for segment in path_segments:
-        if (len(current_segment) + len(segment) + len("/")) > MAX_PATH_LENGTH:
-            safe_path_segments.append(current_segment)
-            current_segment = segment
-        else:
-            current_segment = os.path.join(current_segment, segment)
-    safe_path_segments.append(current_segment)
-    return safe_path_segments
 
 
 class FileEncryptor:
@@ -676,39 +669,6 @@ def decrypt_filename(encrypted_filename: bytes) -> str:
         raise
 
 
-def safe_makedirs(dirpath: str, exist_ok: bool = False):
-    """creates diretories even if the path is longer than MAX_PATH_LENGTH"""
-    path = pathlib.Path(dirpath)
-    root = str(path.parent)
-    directory = str(path.name)
-    if len(path.parts) < 2:
-        raise ValueError(f"Invalid path: {dirpath}")
-    old_cwd = os.getcwd()
-    if len(dirpath) > MAX_PATH_LENGTH:
-        segments = get_safe_path_segments(root)
-        for segment in segments:
-            os.makedirs(segment, exist_ok=exist_ok)
-            os.chdir(segment)
-        os.makedirs(directory, exist_ok=exist_ok)
-    else:
-        os.makedirs(dirpath, exist_ok=exist_ok)
-    safe_cwd(old_cwd)
-
-
-def safe_is_dir(path: str):
-    """returns True if path is a directory, even if the path is longer than MAX_PATH_LENGTH"""
-    with safe_cwd_cm(os.getcwd()):
-        if len(path) > MAX_PATH_LENGTH:
-            segments = get_safe_path_segments(path)
-            for segment in segments:
-                if not os.path.isdir(segment):
-                    return False
-                os.chdir(segment)
-            return True
-        else:
-            return os.path.isdir(path)
-
-
 def encrypt_directory(source, destination):
     """encrypts all files and directories in directory and writes them to destination"""
     log.debug(f"encrypt_directory({source} -> {destination})")
@@ -780,75 +740,6 @@ def encrypt_directory(source, destination):
                 destination=abs_enc_dname,
             )
         break  # one level in each call, the rest gets handled in the recurisve calls
-
-
-def safe_cwd(directory: str):
-    """Changes to a directory that is over MAX_PATH_LENGTH"""
-    if len(directory) > MAX_PATH_LENGTH:
-        segments = get_safe_path_segments(directory)
-        for segment in segments:
-            os.chdir(segment)
-        if not os.getcwd() == directory:
-            raise RuntimeError(
-                f"Failed to change to directory {directory}, cwd is "
-                f"{os.getcwd()}, segments: {segments}"
-            )
-    else:
-        os.chdir(directory)
-
-
-@contextmanager
-def safe_cwd_cm(directory: str):
-    """
-    Context manager:
-    changes to a directory that is over MAX_PATH_LENGTH
-    and then back
-    """
-    try:
-        old_cwd = os.getcwd()
-    except FileNotFoundError:
-        # sometimes we are in a directory that no longer exists ;)
-        log.warning("Current working directory no longer exists, will return to /")
-        old_cwd = "/"
-    try:
-        safe_cwd(directory)
-        yield
-    finally:
-        safe_cwd(old_cwd)
-
-
-def safe_walker(directory: str):
-    """
-    Generator that returns only regular files and dirs and
-    ignores symlinks and other special files
-    """
-    if not safe_is_dir(directory):
-        raise IOError(f"Directory {directory} does not exist or is not a directory")
-    with safe_cwd_cm(directory):
-        for root, dirs, files in os.walk("."):
-            root = directory
-            filtered_dirs = []
-            filtered_files = []
-            for dname in dirs:
-                if os.path.islink(dname):
-                    log.warning(
-                        f"Symbolic link {os.path.join(directory, dname)} ignored."
-                    )
-                    continue
-                filtered_dirs.append(dname)
-            for fname in files:
-                if os.path.islink(fname):
-                    log.warning(
-                        f"Symbolic link {os.path.join(directory, fname)} ignored."
-                    )
-                    continue
-                if not os.path.isfile(fname):
-                    log.warning(
-                        f"Special file {os.path.join(directory, fname)} ignored."
-                    )
-                    continue
-                filtered_files.append(fname)
-            yield (root, filtered_dirs, filtered_files)
 
 
 def decrypt_directory(source, destination):
