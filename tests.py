@@ -971,8 +971,7 @@ class StatusReporterTest(unittest.TestCase):
         base.encrypt_directory(source_dir, encrypted_dir)
         self.assertEqual(
             reporter.files_processed,  # all skipped will be processed again
-            reporter.files_skipped
-            * 2,  # only skips from the second run will be counted
+            reporter.files_skipped,
             "Skipped and processed counts must match on second run.",
         )
 
@@ -994,8 +993,7 @@ class StatusReporterTest(unittest.TestCase):
         base.decrypt_directory(encrypted_dir, decrypted_dir)
         self.assertEqual(
             reporter.files_processed,  # all skipped will be processed again
-            reporter.files_skipped
-            * 2,  # only skips from the second run will be counted
+            reporter.files_skipped,
             "Skipped and processed counts must match on second run.",
         )
 

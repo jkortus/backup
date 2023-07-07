@@ -546,7 +546,6 @@ class StatusReporter:
 
         elif name == "skip_file":
             self.files_skipped += 1
-            self.files_processed += 1
             intro = "\rSkipping file/dir (already encrypted in target): "
             replacement = "[...]"
             display_name = args[0]
