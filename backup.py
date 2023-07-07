@@ -6,9 +6,10 @@ import logging
 import sys
 import base
 
-logging.basicConfig(level=logging.WARNING)
+logging.basicConfig()
 
 log = logging.getLogger(__name__)
+log.setLevel(logging.WARNING)
 
 # pylint: disable=broad-except
 
@@ -31,7 +32,7 @@ def main():
         metavar=("SOURCE", "TARGET"),
         help="decrypt SOURCE to TARGET",
     )
-    parser.add_argument("--ls", nargs=1, metavar=("SOURCE"), help="list SOURCE")
+    parser.add_argument("-l", "--list", nargs=1, metavar=("SOURCE"), help="list SOURCE")
 
     parser.add_argument(
         "-p", "--password", metavar="password", type=str, help="password", default=""
@@ -78,13 +79,14 @@ def main():
             log.exception(ex)
             print("Error: " + str(ex), file=sys.stderr)
             sys.exit(2)
-    elif args.ls:
+    elif args.list:
         try:
-            directory = base.FSDirectory.from_filesystem(args.ls[0])
+            directory = base.FSDirectory.from_filesystem(args.list[0])
             directory.pretty_print()
 
         except Exception as ex:
-            log.exception(ex)
+            log.debug(f"Exception: {ex}", exc_info=True)
+            log.error(ex)
             sys.exit(2)
 
     else:

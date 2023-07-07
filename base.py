@@ -148,19 +148,25 @@ class FSDirectory:
         """prints the directory structure"""
         print(self.dump(indent=indent))
 
-    def dump(self, indent: int = 2) -> str:
+    def dump(self, indent: int = 2, show_encrypted_fnames=False) -> str:
         """returns a string representation of the directory structure"""
         result = ""
         if self.is_encrypted:
-            display_name = f"{self.decrypted_name} (encrypted as: {self.name})"
+            display_name = f"{self.decrypted_name}"
+            if show_encrypted_fnames:
+                display_name += f" (encrypted as: {self.name})"
         else:
-            display_name = f"{self.name} (unencrypted)"
+            display_name = f"{self.name} (not encrypted)"
         result += f"{' ' * indent}[{display_name}]" "\n"
         for directory in self.directories:
-            result += directory.dump(indent=indent + 2)
+            result += directory.dump(
+                indent=indent + 2, show_encrypted_fnames=show_encrypted_fnames
+            )
         for file in self.files:
             if file.is_encrypted:
-                display_name = f"{file.decrypted_name} (encrypted as: {file.name})"
+                display_name = f"{file.decrypted_name}"
+                if show_encrypted_fnames:
+                    display_name += f" (encrypted as: {file.name})"
             else:
                 display_name = f"{file.name} (unencrypted)"
             result += f"{' ' * (indent+2)}{display_name} " "\n"
