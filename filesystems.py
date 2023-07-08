@@ -43,7 +43,7 @@ def safe_makedirs(dirpath: str, exist_ok: bool = False):
         os.makedirs(directory, exist_ok=exist_ok)
     else:
         os.makedirs(dirpath, exist_ok=exist_ok)
-    safe_cwd(old_cwd)
+    safe_chdir(old_cwd)
 
 
 def get_safe_path_segments(path: str) -> list[str]:
@@ -61,7 +61,7 @@ def get_safe_path_segments(path: str) -> list[str]:
     return safe_path_segments
 
 
-def safe_cwd(directory: str):
+def safe_chdir(directory: str):
     """Changes to a directory that is over MAX_PATH_LENGTH"""
     if len(directory) > MAX_PATH_LENGTH:
         segments = get_safe_path_segments(directory)
@@ -90,10 +90,10 @@ def safe_cwd_cm(directory: str):
         log.warning("Current working directory no longer exists, will return to /")
         old_cwd = "/"
     try:
-        safe_cwd(directory)
+        safe_chdir(directory)
         yield
     finally:
-        safe_cwd(old_cwd)
+        safe_chdir(old_cwd)
 
 
 def safe_walker(directory: str):
