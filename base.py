@@ -792,21 +792,6 @@ def decrypt_directory(source, destination):
         break  # one level in each call, the rest gets handled in the recurisve calls
 
 
-def create_fs_tree(root: str) -> FSDirectory:
-    """creates a dictionary of the file system tree below root (recursively)"""
-    if not safe_is_dir(root):
-        raise IOError(f"Directory {root} does not exist or is not a directory")
-    with safe_cwd_cm(root):
-        _, dirs, files = next(safe_walker("."))
-        log.debug(f"Content of {root}: dirs: {dirs} files: {files}")
-    fs_root = FSDirectory(name=root, root=root)
-    for dname in dirs:
-        fs_root.add_directory(create_fs_tree(os.path.join(root, dname)))
-    for fname in files:
-        fs_root.add_file(FSFile(name=fname))
-    return fs_root
-
-
 def get_password():
     """asks for password interactively"""
     global _PASSWORD  # pylint: disable=global-statement
