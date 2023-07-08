@@ -13,9 +13,9 @@ from filesystems import (
     safe_cwd_cm,
     safe_walker,
     get_safe_path_segments,
-    safe_makedirs,
     MAX_PATH_LENGTH,
     MAX_FILENAME_LENGTH,
+    RealFilesystem,
 )
 
 # pylint: disable=logging-fstring-interpolation
@@ -56,6 +56,9 @@ _KEYSTORE = {}  # cached keys for detected salts
 _ENCRYPTION_KEY = None  # cached encryption key
 _PASSWORD = None  # cached password
 STATUS_REPORTER = None  # StatusReporter instance for progress monitoring, optional
+
+SOURCE_FS = RealFilesystem()
+TARGET_FS = RealFilesystem()
 
 log.debug(f"Max unencrypted filename length: {MAX_UNENCRYPTED_FILENAME_LENGTH}")
 log.debug(f"Max size of unecrypted input: {MAX_FILE_SIZE} bytes")
@@ -181,19 +184,23 @@ class FSDirectory:
         return result
 
     @classmethod
-    def from_filesystem(cls, path: str, recursive=True) -> Self:
+    def from_filesystem(
+        cls, filesystem: RealFilesystem, path: str, recursive=True
+    ) -> Self:
         """creates a FSdirectory tree from the file system"""
-        if not safe_is_dir(path):
+        if not filesystem.is_dir(path):
             raise IOError(f"Directory {path} does not exist or is not a directory")
-        with safe_cwd_cm(path):
-            _, dirs, files = next(safe_walker("."))
+        with filesystem.cwd_cm(path):
+            _, dirs, files = next(filesystem.walk("."))
             # log.debug(f"Content of {path}: dirs: {dirs} files: {files}")
         name = pathlib.Path(path).name
         parent = pathlib.Path(path).parent
         directory = cls(name=name, root=parent)
         for dname in dirs:
             if recursive:
-                directory.add_directory(cls.from_filesystem(os.path.join(path, dname)))
+                directory.add_directory(
+                    cls.from_filesystem(filesystem, os.path.join(path, dname))
+                )
             else:
                 directory.add_directory(FSDirectory(name=dname))
         for fname in files:
@@ -672,19 +679,21 @@ def decrypt_filename(encrypted_filename: bytes) -> str:
 def encrypt_directory(source, destination):
     """encrypts all files and directories in directory and writes them to destination"""
     log.debug(f"encrypt_directory({source} -> {destination})")
-    safe_makedirs(destination, exist_ok=True)
+    TARGET_FS.makedirs(destination, exist_ok=True)
     # use one key for all files in a run. Different runs (for new files for instance)
     # will use different keys
     key = get_key()
-    if not safe_is_dir(source):
+    if not SOURCE_FS.is_dir(source):
         raise ValueError(f"Directory {source} does not exist or is not a directory")
 
-    for root, dirs, files in safe_walker(source):
+    for root, dirs, files in SOURCE_FS.walk(source):
         root = source
         # existing_dirs, existing_files = list_encrypted_directory(
         #    destination, password=password
         # )
-        dir_object = FSDirectory.from_filesystem(destination, recursive=False)
+        dir_object = FSDirectory.from_filesystem(
+            TARGET_FS, destination, recursive=False
+        )
         existing_dirs = {}
         for _d in dir_object.directories:
             existing_dirs[_d.decrypted_name] = _d.name
@@ -733,8 +742,8 @@ def encrypt_directory(source, destination):
                     f"{abs_enc_dname}"
                 )
                 report_event("encrypt_directory", abs_dname, abs_enc_dname)
-                with safe_cwd_cm(destination):
-                    os.mkdir(encrypted_dirname)
+                with TARGET_FS.cwd_cm(destination):
+                    TARGET_FS.mkdir(encrypted_dirname)
             encrypt_directory(
                 source=abs_dname,
                 destination=abs_enc_dname,
@@ -745,13 +754,13 @@ def encrypt_directory(source, destination):
 def decrypt_directory(source, destination):
     """decrypts all files and directories in directory and writes them to destination"""
     log.debug(f"decrypt_directory({source} -> {destination})")
-    safe_makedirs(destination, exist_ok=True)
-    if not safe_is_dir(source):
+    TARGET_FS.makedirs(destination, exist_ok=True)
+    if not SOURCE_FS.is_dir(source):
         raise ValueError(f"Directory {source} does not exist or is not a directory")
 
-    for root, dirs, files in safe_walker(source):
+    for root, dirs, files in SOURCE_FS.walk(source):
         root = source  # override due to cwd context manager
-        with safe_cwd_cm(destination):
+        with TARGET_FS.cwd_cm(destination):
             _, existing_dirs, existing_files = next(safe_walker("."))
         log.debug(f"Source dirs in [{source}]: {dirs} Source files: {files}")
         log.debug(
@@ -786,8 +795,8 @@ def decrypt_directory(source, destination):
                 abs_dec_dname = os.path.join(destination, decrypted_dirname)
                 log.info(f"Decrypting directory {abs_dname} -> {abs_dec_dname}")
                 report_event("decrypt_directory", abs_dname, abs_dec_dname)
-                with safe_cwd_cm(destination):
-                    os.mkdir(decrypted_dirname)
+                with TARGET_FS.cwd_cm(destination):
+                    TARGET_FS.mkdir(decrypted_dirname)
             decrypt_directory(source=abs_dname, destination=abs_dec_dname)
         break  # one level in each call, the rest gets handled in the recurisve calls
 

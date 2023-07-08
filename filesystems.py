@@ -3,6 +3,7 @@ import os
 import pathlib
 import logging
 from contextlib import contextmanager
+
 # pylint: disable=logging-fstring-interpolation
 
 log = logging.getLogger(__name__)
@@ -11,6 +12,82 @@ log.setLevel(logging.CRITICAL)
 # file system limits
 MAX_FILENAME_LENGTH = 255
 MAX_PATH_LENGTH = 4096
+
+
+class RealFilesystem:
+    """Class representing a real on-disk filesystem"""
+
+    def is_dir(self, path: str):
+        """returns True if path is a directory"""
+        return safe_is_dir(path)
+
+    def mkdir(self, dirpath: str):
+        """creates diretories"""
+        os.mkdir(dirpath)
+
+    def makedirs(self, dirpath: str, exist_ok: bool = False):
+        """creates diretories"""
+        safe_makedirs(dirpath, exist_ok)
+
+    def getcwd(self):
+        """returns the current working directory"""
+        return os.getcwd()
+
+    def chdir(self, directory: str):
+        """changes the current working directory"""
+        safe_chdir(directory)
+
+    @contextmanager
+    def cwd_cm(self, directory: str):
+        """
+        Context manager:
+        changes to a directory that is over MAX_PATH_LENGTH
+        and then back
+        """
+        try:
+            old_cwd = self.getcwd()
+        except FileNotFoundError:
+            # sometimes we are in a directory that no longer exists ;)
+            log.warning("Current working directory no longer exists, will return to /")
+            old_cwd = "/"
+        try:
+            self.chdir(directory)
+            yield
+        finally:
+            self.chdir(old_cwd)
+
+    def walk(self, directory: str):
+        """
+        Generator that returns only regular files and dirs and
+        ignores symlinks and other special files
+        """
+        if not self.is_dir(directory):
+            raise IOError(f"Directory {directory} does not exist or is not a directory")
+        with self.cwd_cm(directory):
+            for root, dirs, files in os.walk("."):
+                root = directory
+                filtered_dirs = []
+                filtered_files = []
+                for dname in dirs:
+                    if os.path.islink(dname):
+                        log.warning(
+                            f"Symbolic link {os.path.join(directory, dname)} ignored."
+                        )
+                        continue
+                    filtered_dirs.append(dname)
+                for fname in files:
+                    if os.path.islink(fname):
+                        log.warning(
+                            f"Symbolic link {os.path.join(directory, fname)} ignored."
+                        )
+                        continue
+                    if not os.path.isfile(fname):
+                        log.warning(
+                            f"Special file {os.path.join(directory, fname)} ignored."
+                        )
+                        continue
+                    filtered_files.append(fname)
+                yield (root, filtered_dirs, filtered_files)
 
 
 def safe_is_dir(path: str):
