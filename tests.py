@@ -532,8 +532,8 @@ class DirectoryComparisonTest(unittest.TestCase):
     def test_compare_same_directory(self):
         """test identical dirs"""
         newdir = "newdir"
-        dir1 = FSDirectory(self.source_dir)
-        dir2 = FSDirectory(self.source_dir)
+        dir1 = FSDirectory(self.source_dir, filesystem=REAL_FS)
+        dir2 = FSDirectory(self.source_dir, filesystem=REAL_FS)
         self.assertIsNone(
             dir1.one_way_diff(dir2), "No difference expected on identical directories"
         )
@@ -751,28 +751,28 @@ class FSDirectoryTest(unittest.TestCase):
 
     def test_add_str_instead_of_dir(self):
         """test adding string instead of FSDirectory object"""
-        dir1 = FSDirectory(name="root")
+        dir1 = FSDirectory(name="root", filesystem=REAL_FS)
         with self.assertRaises(TypeError):
             dir1.add_directory("dir1")
 
     def test_duplicit_dir_add(self):
         """test adding directory with same name as existing one"""
-        dir1 = FSDirectory(name="root")
-        dir1.add_directory(FSDirectory("dir1"))
+        dir1 = FSDirectory(name="root", filesystem=REAL_FS)
+        dir1.add_directory(FSDirectory("dir1", filesystem=REAL_FS))
         with self.assertRaises(
             ValueError, msg="Adding already existing name should raise ValueError"
         ):
-            dir1.add_directory(FSDirectory("dir1"))
+            dir1.add_directory(FSDirectory("dir1", filesystem=REAL_FS))
 
     def test_add_str_instead_of_file(self):
         """test adding string instead of FSFile object"""
-        dir1 = FSDirectory(name="root")
+        dir1 = FSDirectory(name="root", filesystem=REAL_FS)
         with self.assertRaises(TypeError):
             dir1.add_file("file1")
 
     def test_add_duplicit_file(self):
         """test adding file with same name as existing one"""
-        dir1 = FSDirectory(name="root")
+        dir1 = FSDirectory(name="root", filesystem=REAL_FS)
         dir1.add_file(FSFile("file1"))
         with self.assertRaises(
             ValueError, msg="Adding already existing name should raise ValueError"
@@ -781,8 +781,8 @@ class FSDirectoryTest(unittest.TestCase):
 
     def test_add_file_with_same_name_as_dir(self):
         """test adding file with same name as existing directory"""
-        dir1 = FSDirectory(name="root")
-        dir1.add_directory(FSDirectory("dir1"))
+        dir1 = FSDirectory(name="root", filesystem=REAL_FS)
+        dir1.add_directory(FSDirectory("dir1", filesystem=REAL_FS))
         with self.assertRaises(
             ValueError, msg="Adding already existing name should raise ValueError"
         ):
@@ -790,12 +790,22 @@ class FSDirectoryTest(unittest.TestCase):
 
     def test_add_dir_with_same_name_as_file(self):
         """test adding directory with same name as existing file"""
-        dir1 = FSDirectory(name="root")
+        dir1 = FSDirectory(name="root", filesystem=REAL_FS)
         dir1.add_file(FSFile("file1"))
         with self.assertRaises(
             ValueError, msg="Adding already existing name should raise ValueError"
         ):
-            dir1.add_directory(FSDirectory("file1"))
+            dir1.add_directory(FSDirectory("file1", filesystem=REAL_FS))
+
+    def test_different_fs_raises_error(self):
+        """test adding directory with different filesystem raises an error"""
+        dir1 = FSDirectory(name="root", filesystem=REAL_FS)
+        dir2 = FSDirectory(name="root", filesystem=Mock())
+        with self.assertRaises(
+            ValueError,
+            msg="Adding directory with different filesystem should raise ValueError",
+        ):
+            dir1.add_directory(dir2)
 
 
 class FSDirectoryFilesystemParsingTest(unittest.TestCase):
@@ -881,7 +891,9 @@ class FSDirectoryFilesystemParsingTest(unittest.TestCase):
             "file3": "test3",
         }
         create_fs_tree_from_dict(self.source_dir, tree)
-        parsed_dir = FSDirectory.from_filesystem(REAL_FS, self.source_dir, recursive=False)
+        parsed_dir = FSDirectory.from_filesystem(
+            REAL_FS, self.source_dir, recursive=False
+        )
         # first level has all items
         self.assertEqual(parsed_dir.dir_names(), set(["dir1", "dir2"]))
         self.assertEqual(parsed_dir.file_names(), set(["file3"]))
@@ -934,7 +946,9 @@ class FSDirectoryFilesystemParsingTest(unittest.TestCase):
         }
         create_fs_tree_from_dict(self.source_dir, tree)
         base.encrypt_directory(self.source_dir, self.encrypted_dir)
-        parsed_dir = FSDirectory.from_filesystem(REAL_FS, self.encrypted_dir, recursive=False)
+        parsed_dir = FSDirectory.from_filesystem(
+            REAL_FS, self.encrypted_dir, recursive=False
+        )
         self.assertFalse(parsed_dir.is_encrypted)  # target dir is plaintext normally
         self.assertEqual(parsed_dir.dir_names(), set(["dir1", "dir2"]))
         self.assertEqual(parsed_dir.file_names(), set(["file3"]))

@@ -81,11 +81,12 @@ class FSFile:
 class FSDirectory:
     """File system directory"""
 
-    def __init__(self, name: str, root: None | str = None):
+    def __init__(self, name: str, filesystem: RealFilesystem, root: None | str = None):
         self.name = name
         self.root = root
         self.files = []
         self.directories = []
+        self.filesystem = filesystem
         self.is_encrypted = is_encrypted(self.name)
         if self.is_encrypted:
             self.decrypted_name = decrypt_filename(self.name)
@@ -95,6 +96,10 @@ class FSDirectory:
         if not isinstance(directory, self.__class__):
             raise TypeError(
                 f"Invalid arg for directory, expected {self.__class__}, got {type(directory)}"
+            )
+        if directory.filesystem.__class__ != self.filesystem.__class__:
+            raise ValueError(
+                f"Invalid filesystem for directory {directory.name}, expected {self.filesystem.__class__}"
             )
         if directory.name in self.dir_names() | self.file_names():
             raise ValueError(
@@ -195,14 +200,14 @@ class FSDirectory:
             # log.debug(f"Content of {path}: dirs: {dirs} files: {files}")
         name = pathlib.Path(path).name
         parent = pathlib.Path(path).parent
-        directory = cls(name=name, root=parent)
+        directory = cls(name=name, root=parent, filesystem=filesystem)
         for dname in dirs:
             if recursive:
                 directory.add_directory(
                     cls.from_filesystem(filesystem, os.path.join(path, dname))
                 )
             else:
-                directory.add_directory(FSDirectory(name=dname))
+                directory.add_directory(FSDirectory(name=dname, filesystem=filesystem))
         for fname in files:
             directory.add_file(FSFile(name=fname))
         return directory
@@ -230,21 +235,27 @@ class FSDirectory:
                 subtree_copy = deepcopy(directory)
                 if result is None:
                     # return copy of self without any nested elements (dirs, files)
-                    result = self.__class__(name=self.name, root=self.root)
+                    result = self.__class__(
+                        name=self.name, filesystem=self.filesystem, root=self.root
+                    )
                 result.add_directory(subtree_copy)
             else:
                 # if the directory already exists, compare the subtrees
                 subresult = self.get_directory(dir_name).one_way_diff(directory)
                 if subresult:
                     if result is None:
-                        result = self.__class__(name=self.name, root=self.root)
+                        result = self.__class__(
+                            name=self.name, filesystem=self.filesystem, root=self.root
+                        )
                     result.add_directory(subresult)
 
         for fname in other.file_names():
             filename = fname if not is_encrypted(fname) else decrypt_filename(fname)
             if filename not in self.file_names():
                 if result is None:
-                    result = self.__class__(name=self.name, root=self.root)
+                    result = self.__class__(
+                        name=self.name, filesystem=self.filesystem, root=self.root
+                    )
                 result.add_file(copy.deepcopy(FSFile(name=fname)))
 
         return result
