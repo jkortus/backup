@@ -44,6 +44,11 @@ class RealFilesystem:
         changes to a directory that is over MAX_PATH_LENGTH
         and then back
         """
+
+        if len(directory) == 0:
+            # if directory is empty as a result of path parsing, do nothing
+            yield
+            return
         try:
             old_cwd = self.getcwd()
         except FileNotFoundError:
