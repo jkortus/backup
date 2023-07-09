@@ -6,7 +6,6 @@ import tempfile
 import base64
 import shutil
 import logging
-import cryptography.exceptions
 import base
 from base import EncryptionKey, FSDirectory, FSFile
 from filesystems import RealFilesystem
@@ -23,11 +22,6 @@ log.setLevel(logging.WARNING)
 base.get_password = Mock(return_value="test")
 
 REAL_FS = RealFilesystem()
-
-
-def fake_fstat_size(descriptor):  # pylint: disable=unused-argument
-    """return fstat with size field bigger than max limit, all other entries are zero"""
-    return os.stat_result((0, 0, 0, 0, 0, 0, base.MAX_FILE_SIZE + 1, 0, 0, 0))
 
 
 def create_fs_tree(root, depth=2, files_per_dir=3, dirs_per_dir=2):
@@ -109,7 +103,7 @@ class FileEncryptorTest(unittest.TestCase):
         """Test encryption of file"""
         key = base.get_key()
         # encrypt buffered
-        encryptor = base.FileEncryptor(path=self.test_file, key=key)
+        encryptor = base.FileEncryptor(path=self.test_file, key=key, filesystem=REAL_FS)
         encrypted_data = b""
         buffer_size = 1024 * 10
         while True:
@@ -119,7 +113,7 @@ class FileEncryptorTest(unittest.TestCase):
             encrypted_data += new_data
         encryptor.close()
         # encrypt all at once with new instance
-        encryptor = base.FileEncryptor(path=self.test_file, key=key)
+        encryptor = base.FileEncryptor(path=self.test_file, key=key, filesystem=REAL_FS)
         encrypted_data_unbuf = encryptor.read()
         encryptor.close()
         # compare the size of the encrypted data, content will differ
@@ -129,7 +123,7 @@ class FileEncryptorTest(unittest.TestCase):
     def test_decrypt_file(self):
         """Test decryption of file"""
         key = base.get_key()
-        enc_buf = base.FileEncryptor(path=self.test_file, key=key)
+        enc_buf = base.FileEncryptor(path=self.test_file, key=key, filesystem=REAL_FS)
         enc_buf_file = self.get_temp_file()
         buffer_size = 1024 * 10
         with open(enc_buf_file, "wb") as tfd:
@@ -139,7 +133,7 @@ class FileEncryptorTest(unittest.TestCase):
                     break
                 tfd.write(data)
         enc_buf.close()
-        enc_unbuf = base.FileEncryptor(path=self.test_file, key=key)
+        enc_unbuf = base.FileEncryptor(path=self.test_file, key=key, filesystem=REAL_FS)
         enc_unbuf_file = self.get_temp_file()
         with open(enc_unbuf_file, "wb") as tfd:
             while True:
@@ -150,7 +144,7 @@ class FileEncryptorTest(unittest.TestCase):
         enc_unbuf.close()
 
         # decrypt
-        dec_buf = base.FileDecryptor(path=enc_buf_file)
+        dec_buf = base.FileDecryptor(path=enc_buf_file, filesystem=REAL_FS)
         dec_buf_data = b""
         while True:
             new_data = dec_buf.read(buffer_size)
@@ -158,7 +152,7 @@ class FileEncryptorTest(unittest.TestCase):
                 break
             dec_buf_data += new_data
         dec_buf.close()
-        dec_unbuf = base.FileDecryptor(path=enc_unbuf_file)
+        dec_unbuf = base.FileDecryptor(path=enc_unbuf_file, filesystem=REAL_FS)
         dec_unbuf_data = dec_unbuf.read()
         dec_unbuf.close()
         self.assertEqual(
@@ -174,11 +168,11 @@ class FileEncryptorTest(unittest.TestCase):
         """Test encryption of file to file"""
         key = base.get_key()
         enc_file = self.get_temp_file()
-        enc = base.FileEncryptor(path=self.test_file, key=key)
+        enc = base.FileEncryptor(path=self.test_file, key=key, filesystem=REAL_FS)
         enc.encrypt_to_file(enc_file, overwrite=True)
         enc.close()
         # decrypt
-        dec = base.FileDecryptor(path=enc_file)
+        dec = base.FileDecryptor(path=enc_file, filesystem=REAL_FS)
         dec_data = dec.read()
         dec.close()
         self.assertEqual(
@@ -189,7 +183,7 @@ class FileEncryptorTest(unittest.TestCase):
         """Test decryption of invalid data"""
         key = base.get_key()
         enc_file = self.get_temp_file()
-        enc = base.FileEncryptor(path=self.test_file, key=key)
+        enc = base.FileEncryptor(path=self.test_file, key=key, filesystem=REAL_FS)
         enc.encrypt_to_file(enc_file, overwrite=True)
         enc.close()
         # corrupt data
@@ -197,7 +191,7 @@ class FileEncryptorTest(unittest.TestCase):
             tfd.seek(0)
             tfd.write(b"invalid")
         # decrypt buffered
-        dec = base.FileDecryptor(path=enc_file)
+        dec = base.FileDecryptor(path=enc_file, filesystem=REAL_FS)
         dec_data = b""
         buffer_size = 1024 * 10
         with self.assertRaises(base.DecryptionError):
@@ -208,7 +202,7 @@ class FileEncryptorTest(unittest.TestCase):
                 dec_data += new_data
         dec.close()
         # decrypt unbuffered
-        dec = base.FileDecryptor(path=enc_file)
+        dec = base.FileDecryptor(path=enc_file, filesystem=REAL_FS)
         with self.assertRaises(base.DecryptionError):
             dec_data = dec.read()
         dec.close()
@@ -216,7 +210,7 @@ class FileEncryptorTest(unittest.TestCase):
     def test_plaintext_not_in_encrypted_data(self):
         """Test that the plaintext is not in the encrypted data"""
         key = base.get_key()
-        encryptor = base.FileEncryptor(path=self.test_file, key=key)
+        encryptor = base.FileEncryptor(path=self.test_file, key=key, filesystem=REAL_FS)
         encrypted_data = encryptor.read()
         encryptor.close()
         self.assertNotEqual(encrypted_data, self.test_data)
@@ -226,7 +220,7 @@ class FileEncryptorTest(unittest.TestCase):
         """Test decryption of empty file"""
         enc_file = self.get_temp_file()
         with self.assertRaises(IOError):
-            base.FileDecryptor(path=enc_file)
+            base.FileDecryptor(path=enc_file, filesystem=REAL_FS)
 
     def test_encrypt_existing_file_overwrite(self):
         """Test encryption of existing file with overwrite flag"""
@@ -235,12 +229,12 @@ class FileEncryptorTest(unittest.TestCase):
         enc_file = self.get_temp_file()
         with open(enc_file, "wb") as tfd:
             tfd.write(orig_data)
-        enc = base.FileEncryptor(path=self.test_file, key=key)
+        enc = base.FileEncryptor(path=self.test_file, key=key, filesystem=REAL_FS)
         dest_file = self.get_temp_file()
         with self.assertRaises(OSError):
             enc.encrypt_to_file(dest_file)
         enc.close()
-        enc = base.FileEncryptor(path=self.test_file, key=key)
+        enc = base.FileEncryptor(path=self.test_file, key=key, filesystem=REAL_FS)
         enc.encrypt_to_file(dest_file, overwrite=True)
         enc.close()
         with open(dest_file, "rb") as tfd:
@@ -251,10 +245,10 @@ class FileEncryptorTest(unittest.TestCase):
         """Test decryption of existing file with overwrite flag"""
         key = base.get_key()
         enc_file = self.get_temp_file()
-        enc = base.FileEncryptor(path=self.test_file, key=key)
+        enc = base.FileEncryptor(path=self.test_file, key=key, filesystem=REAL_FS)
         enc.encrypt_to_file(enc_file, overwrite=True)
         enc.close()
-        dec = base.FileDecryptor(path=enc_file)
+        dec = base.FileDecryptor(path=enc_file, filesystem=REAL_FS)
         dest_file = self.get_temp_file()
         orig_data = b"original data"
         with open(dest_file, "wb") as tfd:
@@ -262,7 +256,7 @@ class FileEncryptorTest(unittest.TestCase):
         with self.assertRaises(OSError):
             dec.decrypt_to_file(dest_file)
         dec.close()
-        dec = base.FileDecryptor(path=enc_file)
+        dec = base.FileDecryptor(path=enc_file, filesystem=REAL_FS)
         dec.decrypt_to_file(dest_file, overwrite=True)
         dec.close()
         with open(dest_file, "rb") as tfd:
@@ -276,11 +270,13 @@ class FileEncryptorTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             base.encrypt_filename(key, filename)
 
-    @patch("os.fstat", fake_fstat_size)
+    @patch(
+        "filesystems.RealFilesystem.get_size", Mock(return_value=base.MAX_FILE_SIZE + 1)
+    )
     def test_file_too_big_to_encrypt(self):
         """Tests that encryption attempt of too large file raises an error"""
         key = base.get_key()
-        encryptor = base.FileEncryptor(path=self.test_file, key=key)
+        encryptor = base.FileEncryptor(path=self.test_file, key=key, filesystem=REAL_FS)
         with self.assertRaises(
             IOError,
             msg="File encryption of file bigger than limit did not raise an error",

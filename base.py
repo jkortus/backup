@@ -321,7 +321,12 @@ class FileEncryptor:
     """File wrapper that encrypts the content of the file on the fly"""
 
     # pylint: disable=invalid-name
-    def __init__(self, path: str, key: EncryptionKey):
+    def __init__(
+        self,
+        path: str,
+        key: EncryptionKey,
+        filesystem: RealFilesystem,
+    ):
         self.key = key
         self.iv = os.urandom(IV_SIZE_BYTES)
         self.encryptor = Cipher(
@@ -329,6 +334,7 @@ class FileEncryptor:
             modes.GCM(self.iv),
         ).encryptor()
         self.path = path
+        self.filesystem = filesystem
         self._fd = None  # holding fd to a file when opened
         self.finalized = False
 
@@ -343,17 +349,11 @@ class FileEncryptor:
             if len(self.path) > MAX_PATH_LENGTH:
                 dirpath = os.path.dirname(self.path)
                 filename = os.path.basename(self.path)
-                safe_path_segments = get_safe_path_segments(dirpath)
-                old_cwd = os.getcwd()
-                for segment in safe_path_segments:
-                    os.chdir(segment)
-                self._fd = open(filename, "rb")
-                for segment in get_safe_path_segments(old_cwd):
-                    os.chdir(segment)
-
+                with self.filesystem.cwd_cm(dirpath):
+                    self._fd = self.filesystem.open(filename, "rb")
             else:
-                self._fd = open(self.path, "rb")
-            file_size = os.fstat(self._fd.fileno()).st_size
+                self._fd = self.filesystem.open(self.path, "rb")
+            file_size = self.filesystem.get_size(self.path)
             if file_size > MAX_FILE_SIZE:
                 raise IOError(
                     f"File size {file_size} of {self.path} is over maximum size"
@@ -389,24 +389,21 @@ class FileEncryptor:
         encrypts the underlying file and writes it to destination
         using incremental reads
         """
-        directory = pathlib.Path(destination).parent
-        filename = pathlib.Path(destination).name
-        with safe_cwd_cm(str(directory)):
-            if os.path.exists(filename) and not overwrite:
-                raise IOError(
-                    f"Destination file {destination} exists and overwrite is disabled."
-                )
-            with open(filename, "wb") as f:
-                try:
-                    while True:
-                        data = self.read(BUFFER_SIZE_BYTES)
-                        if not data:
-                            break
-                        f.write(data)
-                except IOError as e:
-                    log.error(f"Error encountered: {e}")
-                    os.unlink(filename)  # no not keep partial files present on the disk
-                    raise
+        if self.filesystem.exists(destination) and not overwrite:
+            raise IOError(
+                f"Destination file {destination} exists and overwrite is disabled."
+            )
+        with self.filesystem.open(destination, "wb") as f:
+            try:
+                while True:
+                    data = self.read(BUFFER_SIZE_BYTES)
+                    if not data:
+                        break
+                    f.write(data)
+            except IOError as e:
+                log.error(f"Error encountered: {e}")
+                self.filesystem.unlink(destination)  # no not keep partial files present on the disk
+                raise
 
 
 class FileDecryptor:
@@ -417,33 +414,24 @@ class FileDecryptor:
     """
 
     # pylint: disable=invalid-name
-    def __init__(self, path: str):
+    def __init__(self, path: str, filesystem: RealFilesystem):
         self.path = path
         self._fd = None
         self.finalized = False
         self.decryptor = None
-        dirname = str(pathlib.Path(path).parent)
-        filename = str(pathlib.Path(path).name)
-        with safe_cwd_cm(dirname):
-            self.max_read_pos = (
-                os.path.getsize(filename)
-                - IV_SIZE_BYTES
-                - TAG_SIZE_BYTES
-                - SALT_SIZE_BYTES
-            )
+        self.filesystem = filesystem
+        size = self.filesystem.get_size(path)
+        self.max_read_pos = size - IV_SIZE_BYTES - TAG_SIZE_BYTES - SALT_SIZE_BYTES
         if self.max_read_pos < 0:
             raise IOError(
-                f"File size {os.path.getsize(path)} of {path} is too small to be decrypted."
+                f"File size {size} of {path} is too small to be decrypted."
                 "Could not get all crypto metadata."
             )
         self._init_crypto()
 
     def _init_crypto(self):
         """Inits crypto material based on the content of the file and caches the key"""
-        dirname = str(pathlib.Path(self.path).parent)
-        filename = str(pathlib.Path(self.path).name)
-        with safe_cwd_cm(dirname):
-            self._fd = open(filename, "rb")
+        self._fd = self.filesystem.open(self.path, "rb")
         self._fd.seek(-SALT_SIZE_BYTES - IV_SIZE_BYTES - TAG_SIZE_BYTES, os.SEEK_END)
         self.tag = self._fd.read(TAG_SIZE_BYTES)
         self.iv = self._fd.read(IV_SIZE_BYTES)
@@ -494,21 +482,19 @@ class FileDecryptor:
         decrypts the underlying file and writes it to destination
         using incremental reads
         """
-        if os.path.exists(destination) and not overwrite:
+        if self.filesystem.exists(destination) and not overwrite:
             raise IOError(
                 f"Destination file {destination} exists and overwrite is disabled."
             )
         if not self.crypto_init_done:
             self._init_crypto()
-        dirname = str(pathlib.Path(destination).parent)
-        filename = str(pathlib.Path(destination).name)
-        with safe_cwd_cm(dirname):
-            with open(filename, "wb") as f:
-                while True:
-                    data = self.read(BUFFER_SIZE_BYTES)
-                    if not data:
-                        break
-                    f.write(data)
+
+        with self.filesystem.open(destination, "wb") as f:
+            while True:
+                data = self.read(BUFFER_SIZE_BYTES)
+                if not data:
+                    break
+                f.write(data)
 
     def close(self):
         """closes the underlying file if open"""
@@ -736,7 +722,7 @@ def encrypt_directory(source, destination):
             encrypted_filename = encrypt_filename(key, fname).decode("utf-8")
             abs_enc_fname = os.path.join(destination, encrypted_filename)
             log.info(f"Encrypting file {os.path.join(source,fname)} -> {abs_enc_fname}")
-            file_encryptor = FileEncryptor(abs_fname, key)
+            file_encryptor = FileEncryptor(abs_fname, key, filesystem=SOURCE_FS)
             report_event("encrypt_file", abs_fname, abs_enc_fname)
             file_encryptor.encrypt_to_file(abs_enc_fname)
             file_encryptor.close()
@@ -795,7 +781,7 @@ def decrypt_directory(source, destination):
                 continue
             log.info(f"Decrypting file {abs_fname} -> {abs_dec_fname}")
             report_event("decrypt_file", abs_fname, abs_dec_fname)
-            file_decryptor = FileDecryptor(abs_fname)
+            file_decryptor = FileDecryptor(abs_fname, filesystem=SOURCE_FS)
             file_decryptor.decrypt_to_file(os.path.join(destination, abs_dec_fname))
             file_decryptor.close()
         for dname in dirs:

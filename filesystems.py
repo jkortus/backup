@@ -94,6 +94,29 @@ class RealFilesystem:
                     filtered_files.append(fname)
                 yield (root, filtered_dirs, filtered_files)
 
+    def open(self, filepath: str, mode: str = "r", encoding=None):
+        """opens a file and returns a file descriptor"""
+        directory = os.path.dirname(filepath)
+        fname = os.path.basename(filepath)
+        with self.cwd_cm(directory):
+            return open(fname, mode, encoding=encoding)
+
+    def get_size(self, filepath: str):
+        """returns the size of a file"""
+        fname = os.path.basename(filepath)
+        with self.cwd_cm(os.path.dirname(filepath)):
+            return os.path.getsize(fname)
+
+    def exists(self, filepath: str):
+        """returns True if filepath exists"""
+        # TODO: make this max path length safe + tests
+        return os.path.exists(filepath)
+
+    def unlink(self, filepath: str):
+        """removes a file"""
+        # TODO: make this max path length safe + tests
+        os.unlink(filepath)
+
 
 def safe_is_dir(path: str):
     """returns True if path is a directory, even if the path is longer than MAX_PATH_LENGTH"""
