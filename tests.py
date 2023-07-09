@@ -773,11 +773,11 @@ class FSDirectoryTest(unittest.TestCase):
     def test_add_duplicit_file(self):
         """test adding file with same name as existing one"""
         dir1 = FSDirectory(name="root", filesystem=REAL_FS)
-        dir1.add_file(FSFile("file1"))
+        dir1.add_file(FSFile("file1", filesystem=REAL_FS))
         with self.assertRaises(
             ValueError, msg="Adding already existing name should raise ValueError"
         ):
-            dir1.add_file(FSFile("file1"))
+            dir1.add_file(FSFile("file1", filesystem=REAL_FS))
 
     def test_add_file_with_same_name_as_dir(self):
         """test adding file with same name as existing directory"""
@@ -786,12 +786,12 @@ class FSDirectoryTest(unittest.TestCase):
         with self.assertRaises(
             ValueError, msg="Adding already existing name should raise ValueError"
         ):
-            dir1.add_file(FSFile("dir1"))
+            dir1.add_file(FSFile("dir1", filesystem=REAL_FS))
 
     def test_add_dir_with_same_name_as_file(self):
         """test adding directory with same name as existing file"""
         dir1 = FSDirectory(name="root", filesystem=REAL_FS)
-        dir1.add_file(FSFile("file1"))
+        dir1.add_file(FSFile("file1", filesystem=REAL_FS))
         with self.assertRaises(
             ValueError, msg="Adding already existing name should raise ValueError"
         ):
@@ -806,6 +806,16 @@ class FSDirectoryTest(unittest.TestCase):
             msg="Adding directory with different filesystem should raise ValueError",
         ):
             dir1.add_directory(dir2)
+
+    def test_diffferent_file_fs_raises_error(self):
+        """test adding file with different filesystem raises an error"""
+        dir1 = FSDirectory(name="root", filesystem=REAL_FS)
+        file1 = FSFile(name="file1", filesystem=Mock())
+        with self.assertRaises(
+            ValueError,
+            msg="Adding file with different filesystem should raise ValueError",
+        ):
+            dir1.add_file(file1)
 
 
 class FSDirectoryFilesystemParsingTest(unittest.TestCase):

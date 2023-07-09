@@ -71,8 +71,9 @@ class DecryptionError(Exception):
 class FSFile:
     """File system file"""
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, filesystem: RealFilesystem):
         self.name = name
+        self.filesystem = filesystem
         self.is_encrypted = is_encrypted(self.name)
         if self.is_encrypted:
             self.decrypted_name = decrypt_filename(self.name)
@@ -115,6 +116,10 @@ class FSDirectory:
             )
         if file.name in self.file_names() | self.dir_names():
             raise ValueError(f"File {file.name} already exists in {self.name}")
+        if file.filesystem.__class__ != self.filesystem.__class__:
+            raise ValueError(
+                f"Invalid filesystem for file {file.name}, expected {self.filesystem.__class__}"
+            )
         self.files.append(file)
 
     def get_directory(self, name: str):
@@ -209,7 +214,7 @@ class FSDirectory:
             else:
                 directory.add_directory(FSDirectory(name=dname, filesystem=filesystem))
         for fname in files:
-            directory.add_file(FSFile(name=fname))
+            directory.add_file(FSFile(name=fname, filesystem=filesystem))
         return directory
 
     def one_way_diff(self, other: Self) -> Self | None:
@@ -256,7 +261,7 @@ class FSDirectory:
                     result = self.__class__(
                         name=self.name, filesystem=self.filesystem, root=self.root
                     )
-                result.add_file(copy.deepcopy(FSFile(name=fname)))
+                result.add_file(FSFile(name=fname, filesystem=self.filesystem))
 
         return result
 
