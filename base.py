@@ -82,12 +82,19 @@ class FSFile:
 class FSDirectory:
     """File system directory"""
 
-    def __init__(self, name: str, filesystem: RealFilesystem, root: None | str = None):
-        self.name = name
-        self.root = root
+    def __init__(self, path: str, filesystem: RealFilesystem):
+        """
+        path: path to the directory. If it contains only a name without a full path
+              (no parent dir), current working directory will be the parent.
+        filesystem: filesystem object to use for operations
+        """
+        self.name = os.path.basename(path)
+        self.parent = os.path.dirname(path)
+        self.filesystem = filesystem
+        if self.parent == "":
+            self.parent = self.filesystem.getcwd()
         self.files = []
         self.directories = []
-        self.filesystem = filesystem
         self.is_encrypted = is_encrypted(self.name)
         if self.is_encrypted:
             self.decrypted_name = decrypt_filename(self.name)
@@ -106,6 +113,16 @@ class FSDirectory:
             raise ValueError(
                 f"Directory {directory.name} already exists in {self.name}"
             )
+        if directory.parent != self.parent:
+            # warning here, as we expect the caller to be nesting
+            # proper directories with proper internals.
+            log.warning(
+                f"Unexpected parent for directory "
+                f"{os.path.join(directory.parent,directory.name)}, "
+                f"expected {self.parent}, got {directory.parent}. "
+                f"If it is nested subtree, all subdirs will have wrong parent."
+            )
+        directory.parent = os.path.join(self.parent, self.name)
         self.directories.append(directory)
 
     def add_file(self, file: FSFile):
@@ -163,7 +180,7 @@ class FSDirectory:
         return result
 
     def __str__(self):
-        return f"FSDirectory(name={self.name}, root={self.root}, encrypted={self.is_encrypted})"
+        return f"FSDirectory(name={self.name}, parent={self.parent}, encrypted={self.is_encrypted})"
 
     def pretty_print(self, indent: int = 2):
         """prints the directory structure"""
@@ -195,7 +212,7 @@ class FSDirectory:
 
     @classmethod
     def from_filesystem(
-        cls, filesystem: RealFilesystem, path: str, recursive=True
+        cls, path: str, filesystem: RealFilesystem, recursive=True
     ) -> Self:
         """creates a FSdirectory tree from the file system"""
         if not filesystem.is_dir(path):
@@ -203,16 +220,18 @@ class FSDirectory:
         with filesystem.cwd_cm(path):
             _, dirs, files = next(filesystem.walk("."))
             # log.debug(f"Content of {path}: dirs: {dirs} files: {files}")
-        name = pathlib.Path(path).name
-        parent = pathlib.Path(path).parent
-        directory = cls(name=name, root=parent, filesystem=filesystem)
+        directory = cls(path=path, filesystem=filesystem)
         for dname in dirs:
             if recursive:
                 directory.add_directory(
-                    cls.from_filesystem(filesystem, os.path.join(path, dname))
+                    cls.from_filesystem(
+                        path=os.path.join(path, dname), filesystem=filesystem
+                    )
                 )
             else:
-                directory.add_directory(FSDirectory(name=dname, filesystem=filesystem))
+                directory.add_directory(
+                    FSDirectory(path=os.path.join(path, dname), filesystem=filesystem)
+                )
         for fname in files:
             directory.add_file(FSFile(name=fname, filesystem=filesystem))
         return directory
@@ -240,9 +259,7 @@ class FSDirectory:
                 subtree_copy = deepcopy(directory)
                 if result is None:
                     # return copy of self without any nested elements (dirs, files)
-                    result = self.__class__(
-                        name=self.name, filesystem=self.filesystem, root=self.root
-                    )
+                    result = self.__class__(path=self.name, filesystem=self.filesystem)
                 result.add_directory(subtree_copy)
             else:
                 # if the directory already exists, compare the subtrees
@@ -250,7 +267,7 @@ class FSDirectory:
                 if subresult:
                     if result is None:
                         result = self.__class__(
-                            name=self.name, filesystem=self.filesystem, root=self.root
+                            path=self.name, filesystem=self.filesystem
                         )
                     result.add_directory(subresult)
 
@@ -258,9 +275,7 @@ class FSDirectory:
             filename = fname if not is_encrypted(fname) else decrypt_filename(fname)
             if filename not in self.file_names():
                 if result is None:
-                    result = self.__class__(
-                        name=self.name, filesystem=self.filesystem, root=self.root
-                    )
+                    result = self.__class__(path=self.name, filesystem=self.filesystem)
                 result.add_file(FSFile(name=fname, filesystem=self.filesystem))
 
         return result
@@ -402,7 +417,9 @@ class FileEncryptor:
                     f.write(data)
             except IOError as e:
                 log.error(f"Error encountered: {e}")
-                self.filesystem.unlink(destination)  # no not keep partial files present on the disk
+                self.filesystem.unlink(
+                    destination
+                )  # no not keep partial files present on the disk
                 raise
 
 
@@ -694,7 +711,7 @@ def encrypt_directory(source, destination):
         #    destination, password=password
         # )
         dir_object = FSDirectory.from_filesystem(
-            TARGET_FS, destination, recursive=False
+            path=destination, filesystem=TARGET_FS, recursive=False
         )
         existing_dirs = {}
         for _d in dir_object.directories:
