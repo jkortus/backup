@@ -402,7 +402,10 @@ class DirectoryEncryptionTest(unittest.TestCase):
             FSDirectory.from_filesystem(self.source_dir, filesystem=REAL_FS),
             FSDirectory.from_filesystem(self.encrypted_dir, filesystem=REAL_FS),
         )
-        base.decrypt_directory(self.encrypted_dir, self.decrypted_dir)
+        base.decrypt_directory(
+            FSDirectory.from_filesystem(self.encrypted_dir, filesystem=REAL_FS),
+            FSDirectory.from_filesystem(self.decrypted_dir, filesystem=REAL_FS),
+        )
         source_walker = os.walk(self.source_dir)
         decrypted_walker = os.walk(self.decrypted_dir)
         while True:
@@ -460,7 +463,10 @@ class DirectoryEncryptionTest(unittest.TestCase):
             FSDirectory.from_filesystem(source_dir, filesystem=REAL_FS),
             FSDirectory.from_filesystem(dest_dir, filesystem=REAL_FS),
         )
-        base.decrypt_directory(dest_dir, dec_dir)
+        base.decrypt_directory(
+            FSDirectory.from_filesystem(dest_dir, filesystem=REAL_FS),
+            FSDirectory.from_filesystem(dec_dir, filesystem=REAL_FS),
+        )
 
         source_walker = os.walk(source_dir)
         decrypted_walker = os.walk(dec_dir)
@@ -1072,10 +1078,16 @@ class StatusReporterTest(unittest.TestCase):
         )
         reporter = base.StatusReporter()
         base.STATUS_REPORTER = reporter
-        base.decrypt_directory(encrypted_dir, decrypted_dir)
+        base.decrypt_directory(
+            FSDirectory.from_filesystem(encrypted_dir, filesystem=REAL_FS),
+            FSDirectory.from_filesystem(decrypted_dir, filesystem=REAL_FS),
+        )
         decrypted_count = reporter.files_processed
         self.assertGreater(decrypted_count, 0, "Decrypted files were not reported")
-        base.decrypt_directory(encrypted_dir, decrypted_dir)
+        base.decrypt_directory(
+            FSDirectory.from_filesystem(encrypted_dir, filesystem=REAL_FS),
+            FSDirectory.from_filesystem(decrypted_dir, filesystem=REAL_FS),
+        )
         self.assertEqual(
             reporter.files_processed,  # all skipped will be processed again
             reporter.files_skipped,

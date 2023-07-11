@@ -184,6 +184,20 @@ class FSDirectory:
                 result.add(f.name)
         return result
 
+    def get_file(self, name: str) -> FSFile:
+        """returns a file object (FSFile) by (decripted) name"""
+        for file in self.files:
+            if file.is_encrypted:
+                if file.decrypted_name == name:
+                    return file
+            elif file.name == name:
+                return file
+        raise KeyError(f"File {name} not found")
+
+    def get_files(self) -> list[FSFile]:
+        """returns a list of FSFile objects for all directly nested files"""
+        return copy.deepcopy(self.files)
+
     def __str__(self):
         return f"FSDirectory(name={self.name}, parent={self.parent}, encrypted={self.is_encrypted})"
 
@@ -760,54 +774,54 @@ def encrypt_directory(source: FSDirectory, destination: FSDirectory):
         encrypt_directory(source.get_directory(directory), next_target)
 
 
-def decrypt_directory(source, destination):
+def decrypt_directory(source: FSDirectory, destination: FSDirectory):
     """decrypts all files and directories in directory and writes them to destination"""
     log.debug(f"decrypt_directory({source} -> {destination})")
-    TARGET_FS.makedirs(destination, exist_ok=True)
-    if not SOURCE_FS.is_dir(source):
-        raise ValueError(f"Directory {source} does not exist or is not a directory")
-
-    for root, dirs, files in SOURCE_FS.walk(source):
-        root = source  # override due to cwd context manager
-        with TARGET_FS.cwd_cm(destination):
-            _, existing_dirs, existing_files = next(safe_walker("."))
-        log.debug(f"Source dirs in [{source}]: {dirs} Source files: {files}")
-        log.debug(
-            f"Existing decrypted dirs in [{destination}]: {existing_dirs} "
-            f"Existing files: {existing_files}"
+    destination.filesystem.makedirs(destination.abs_path, exist_ok=True)
+    if not source.filesystem.is_dir(source.abs_path):
+        raise ValueError(
+            f"Directory {source.abs_path} does not exist or is not a directory"
         )
-        for fname in files:
-            decrypted_filename = decrypt_filename(fname)
-            abs_fname = os.path.join(root, fname)
-            abs_dec_fname = os.path.join(destination, decrypted_filename)
-            if decrypted_filename in existing_files:
-                log.info(
-                    f"Skipping already decrypted file {abs_fname} -> {abs_dec_fname}"
-                )
-                report_event("skip_file", abs_fname, abs_dec_fname)
-                continue
-            log.info(f"Decrypting file {abs_fname} -> {abs_dec_fname}")
-            report_event("decrypt_file", abs_fname, abs_dec_fname)
-            file_decryptor = FileDecryptor(abs_fname, filesystem=SOURCE_FS)
-            file_decryptor.decrypt_to_file(os.path.join(destination, abs_dec_fname))
-            file_decryptor.close()
-        for dname in dirs:
-            abs_dname = os.path.join(root, dname)
-            decrypted_dirname = decrypt_filename(dname)
-            if decrypted_dirname in existing_dirs:
-                abs_dec_dname = os.path.join(destination, decrypted_dirname)
-                log.info(
-                    f"Skipping already decrypted directory {abs_dname} -> {abs_dec_dname}"
-                )
-                report_event("skip_directory", abs_dname, abs_dec_dname)
-            else:
-                abs_dec_dname = os.path.join(destination, decrypted_dirname)
-                log.info(f"Decrypting directory {abs_dname} -> {abs_dec_dname}")
-                report_event("decrypt_directory", abs_dname, abs_dec_dname)
-                with TARGET_FS.cwd_cm(destination):
-                    TARGET_FS.mkdir(decrypted_dirname)
-            decrypt_directory(source=abs_dname, destination=abs_dec_dname)
-        break  # one level in each call, the rest gets handled in the recurisve calls
+
+    for file in source.get_files():
+        source_abs_fname = os.path.join(source.abs_path, file.name)
+        target_abs_fname = os.path.join(destination.abs_path, file.decrypted_name)
+        if file.decrypted_name in destination.file_names():
+            log.info(
+                f"Skipping already decrypted file {source_abs_fname} ({file.decrypted_name}) "
+                f"-> {target_abs_fname}"
+            )
+            report_event("skip_file", source_abs_fname, target_abs_fname)
+            continue
+        log.info(f"Decrypting file {source_abs_fname} -> {target_abs_fname}")
+        report_event("decrypt_file", source_abs_fname, target_abs_fname)
+        file_decryptor = FileDecryptor(source_abs_fname, filesystem=SOURCE_FS)
+        file_decryptor.decrypt_to_file(
+            target_abs_fname, filesystem=destination.filesystem
+        )
+        file_decryptor.close()
+
+    for directory in source.dir_names():
+        source_dir = source.get_directory(directory)
+        source_abs_dir_name = os.path.join(source.abs_path, source_dir.name)
+        target_abs_dir_name = os.path.join(destination.abs_path, directory)
+        if directory in destination.dir_names():
+            log.info(
+                f"Skipping already decrypted directory "
+                f"{source_abs_dir_name} -> {target_abs_dir_name}"
+            )
+            report_event("skip_directory", source_abs_dir_name, target_abs_dir_name)
+            next_target = destination.get_directory(directory)
+        else:
+            log.info(
+                f"Decrypting directory {source_abs_dir_name} -> {target_abs_dir_name}"
+            )
+            report_event("decrypt_directory", source_abs_dir_name, target_abs_dir_name)
+            destination.filesystem.mkdir(target_abs_dir_name)
+            next_target = FSDirectory.from_filesystem(
+                target_abs_dir_name, filesystem=destination.filesystem
+            )
+        decrypt_directory(source.get_directory(directory), next_target)
 
 
 def get_password():
