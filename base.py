@@ -2,7 +2,7 @@
 import os
 import base64
 import logging
-from typing import Self
+from typing import Self, Type
 import copy
 import getpass
 from copy import deepcopy
@@ -10,7 +10,7 @@ import filesystems
 from filesystems import (
     MAX_PATH_LENGTH,
     MAX_FILENAME_LENGTH,
-    RealFilesystem,
+    Filesystem,
 )
 
 # pylint: disable=logging-fstring-interpolation
@@ -63,7 +63,7 @@ class DecryptionError(Exception):
 class FSFile:
     """File system file"""
 
-    def __init__(self, name: str, filesystem: RealFilesystem):
+    def __init__(self, name: str, filesystem: Type[Filesystem]):
         self.name = name
         self.filesystem = filesystem
         self.is_encrypted = is_encrypted(self.name)
@@ -74,7 +74,7 @@ class FSFile:
 class FSDirectory:
     """File system directory"""
 
-    def __init__(self, path: str, filesystem: RealFilesystem):
+    def __init__(self, path: str, filesystem: Type[Filesystem]):
         """
         path: path to the directory. If it contains only a name without a full path
               (no parent dir), current working directory will be the parent.
@@ -223,7 +223,7 @@ class FSDirectory:
 
     @classmethod
     def from_filesystem(
-        cls, path: str, filesystem: RealFilesystem, recursive=True
+        cls, path: str, filesystem: Type[Filesystem], recursive=True
     ) -> Self:
         """creates a FSdirectory tree from the file system"""
         if not filesystem.is_dir(path):
@@ -351,7 +351,7 @@ class FileEncryptor:
         self,
         path: str,
         key: EncryptionKey,
-        filesystem: RealFilesystem,
+        filesystem: Type[Filesystem],
     ):
         self.key = key
         self.iv = os.urandom(IV_SIZE_BYTES)
@@ -410,7 +410,7 @@ class FileEncryptor:
             self._fd.close()
             self._fd = None
 
-    def encrypt_to_file(self, destination, filesystem, overwrite=False):
+    def encrypt_to_file(self, destination: str, filesystem: Type[Filesystem], overwrite=False):
         """
         encrypts the underlying file and writes it to destination
         using incremental reads
@@ -442,7 +442,7 @@ class FileDecryptor:
     """
 
     # pylint: disable=invalid-name
-    def __init__(self, path: str, filesystem: RealFilesystem):
+    def __init__(self, path: str, filesystem: Type[Filesystem]):
         self.path = path
         self._fd = None
         self.finalized = False
@@ -505,7 +505,7 @@ class FileDecryptor:
             ) from ex
         return decrypted_data
 
-    def decrypt_to_file(self, destination, filesystem, overwrite=False):
+    def decrypt_to_file(self, destination: str, filesystem: Type[Filesystem], overwrite=False):
         """
         decrypts the underlying file and writes it to destination
         using incremental reads

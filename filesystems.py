@@ -3,6 +3,8 @@ import os
 import pathlib
 import logging
 from contextlib import contextmanager
+from abc import ABC, abstractmethod
+from typing import Generator, IO, AnyStr
 
 # pylint: disable=logging-fstring-interpolation
 
@@ -14,7 +16,63 @@ MAX_FILENAME_LENGTH = 255
 MAX_PATH_LENGTH = 4096
 
 
-class RealFilesystem:
+class Filesystem(ABC):
+    """Abstract class representing a filesystem"""
+
+    @abstractmethod
+    def is_dir(self, path: str) -> bool:
+        """returns True if path is a directory"""
+
+    @abstractmethod
+    def mkdir(self, dirpath: str) -> None:
+        """creates diretories"""
+
+    @abstractmethod
+    def makedirs(self, dirpath: str, exist_ok: bool = False) -> None:
+        """creates diretories"""
+
+    @abstractmethod
+    def getcwd(self) -> str:
+        """returns the current working directory"""
+
+    @abstractmethod
+    def chdir(self, directory: str) -> None:
+        """changes the current working directory"""
+
+    @abstractmethod
+    @contextmanager
+    def cwd_cm(self, directory: str) -> None:
+        """
+        Context manager:
+        changes to a directory that is over MAX_PATH_LENGTH
+        and then back
+        """
+
+    @abstractmethod
+    def walk(self, directory: str) -> Generator[str, list, list]:
+        """
+        Generator that returns only regular files and dirs and
+        ignores symlinks and other special files
+        """
+
+    @abstractmethod
+    def open(self, filepath: str, mode: str = "r", encoding=None) -> IO[AnyStr]:
+        """opens a file and returns a file descriptor"""
+
+    @abstractmethod
+    def get_size(self, filepath: str) -> int:
+        """returns the size of a file"""
+
+    @abstractmethod
+    def exists(self, filepath: str) -> bool:
+        """returns True if filepath exists"""
+
+    @abstractmethod
+    def unlink(self, filepath: str) -> None:
+        """removes a file"""
+
+
+class RealFilesystem(Filesystem):
     """Class representing a real on-disk filesystem"""
 
     def is_dir(self, path: str):
@@ -239,3 +297,6 @@ def safe_walker(directory: str):
                     continue
                 filtered_files.append(fname)
             yield (root, filtered_dirs, filtered_files)
+
+
+Filesystem.register(RealFilesystem)
