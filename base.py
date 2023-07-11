@@ -3,16 +3,11 @@ import os
 import base64
 import logging
 from typing import Self
-import pathlib
 import copy
 import getpass
 from copy import deepcopy
 import filesystems
 from filesystems import (
-    safe_is_dir,
-    safe_cwd_cm,
-    safe_walker,
-    get_safe_path_segments,
     MAX_PATH_LENGTH,
     MAX_FILENAME_LENGTH,
     RealFilesystem,
@@ -56,9 +51,6 @@ _KEYSTORE = {}  # cached keys for detected salts
 _ENCRYPTION_KEY = None  # cached encryption key
 _PASSWORD = None  # cached password
 STATUS_REPORTER = None  # StatusReporter instance for progress monitoring, optional
-
-SOURCE_FS = RealFilesystem()
-TARGET_FS = RealFilesystem()
 
 log.debug(f"Max unencrypted filename length: {MAX_UNENCRYPTED_FILENAME_LENGTH}")
 log.debug(f"Max size of unecrypted input: {MAX_FILE_SIZE} bytes")
@@ -418,12 +410,11 @@ class FileEncryptor:
             self._fd.close()
             self._fd = None
 
-    def encrypt_to_file(self, destination, filesystem=TARGET_FS, overwrite=False):
+    def encrypt_to_file(self, destination, filesystem, overwrite=False):
         """
         encrypts the underlying file and writes it to destination
         using incremental reads
         """
-        # TODO: filesystem as a mandatory param
         if filesystem.exists(destination) and not overwrite:
             raise IOError(
                 f"Destination file {destination} exists and overwrite is disabled."
@@ -514,12 +505,11 @@ class FileDecryptor:
             ) from ex
         return decrypted_data
 
-    def decrypt_to_file(self, destination, filesystem=TARGET_FS, overwrite=False):
+    def decrypt_to_file(self, destination, filesystem, overwrite=False):
         """
         decrypts the underlying file and writes it to destination
         using incremental reads
         """
-        # TODO: filesystem as a mandatory param
         if filesystem.exists(destination) and not overwrite:
             raise IOError(
                 f"Destination file {destination} exists and overwrite is disabled."
@@ -747,7 +737,7 @@ def encrypt_directory(source: FSDirectory, destination: FSDirectory):
         encrypted_filename = encrypt_filename(key, fname).decode("utf-8")
         abs_enc_fname = os.path.join(destination.abs_path, encrypted_filename)
         log.info(f"Encrypting file {source_abs_fname} -> {abs_enc_fname}")
-        file_encryptor = FileEncryptor(source_abs_fname, key, filesystem=SOURCE_FS)
+        file_encryptor = FileEncryptor(source_abs_fname, key, filesystem=source.filesystem)
         report_event("encrypt_file", source_abs_fname, abs_enc_fname)
         file_encryptor.encrypt_to_file(abs_enc_fname, filesystem=destination.filesystem)
         file_encryptor.close()
@@ -795,7 +785,7 @@ def decrypt_directory(source: FSDirectory, destination: FSDirectory):
             continue
         log.info(f"Decrypting file {source_abs_fname} -> {target_abs_fname}")
         report_event("decrypt_file", source_abs_fname, target_abs_fname)
-        file_decryptor = FileDecryptor(source_abs_fname, filesystem=SOURCE_FS)
+        file_decryptor = FileDecryptor(source_abs_fname, filesystem=source.filesystem)
         file_decryptor.decrypt_to_file(
             target_abs_fname, filesystem=destination.filesystem
         )

@@ -169,7 +169,7 @@ class FileEncryptorTest(unittest.TestCase):
         key = base.get_key()
         enc_file = self.get_temp_file()
         enc = base.FileEncryptor(path=self.test_file, key=key, filesystem=REAL_FS)
-        enc.encrypt_to_file(enc_file, overwrite=True)
+        enc.encrypt_to_file(enc_file, filesystem=REAL_FS, overwrite=True)
         enc.close()
         # decrypt
         dec = base.FileDecryptor(path=enc_file, filesystem=REAL_FS)
@@ -184,7 +184,7 @@ class FileEncryptorTest(unittest.TestCase):
         key = base.get_key()
         enc_file = self.get_temp_file()
         enc = base.FileEncryptor(path=self.test_file, key=key, filesystem=REAL_FS)
-        enc.encrypt_to_file(enc_file, overwrite=True)
+        enc.encrypt_to_file(enc_file, filesystem=REAL_FS, overwrite=True)
         enc.close()
         # corrupt data
         with open(enc_file, "r+b") as tfd:
@@ -232,10 +232,10 @@ class FileEncryptorTest(unittest.TestCase):
         enc = base.FileEncryptor(path=self.test_file, key=key, filesystem=REAL_FS)
         dest_file = self.get_temp_file()
         with self.assertRaises(OSError):
-            enc.encrypt_to_file(dest_file)
+            enc.encrypt_to_file(dest_file, filesystem=REAL_FS)
         enc.close()
         enc = base.FileEncryptor(path=self.test_file, key=key, filesystem=REAL_FS)
-        enc.encrypt_to_file(dest_file, overwrite=True)
+        enc.encrypt_to_file(dest_file, filesystem=REAL_FS, overwrite=True)
         enc.close()
         with open(dest_file, "rb") as tfd:
             enc_data = tfd.read()
@@ -246,7 +246,7 @@ class FileEncryptorTest(unittest.TestCase):
         key = base.get_key()
         enc_file = self.get_temp_file()
         enc = base.FileEncryptor(path=self.test_file, key=key, filesystem=REAL_FS)
-        enc.encrypt_to_file(enc_file, overwrite=True)
+        enc.encrypt_to_file(enc_file, filesystem=REAL_FS, overwrite=True)
         enc.close()
         dec = base.FileDecryptor(path=enc_file, filesystem=REAL_FS)
         dest_file = self.get_temp_file()
@@ -254,10 +254,10 @@ class FileEncryptorTest(unittest.TestCase):
         with open(dest_file, "wb") as tfd:
             tfd.write(orig_data)
         with self.assertRaises(OSError):
-            dec.decrypt_to_file(dest_file)
+            dec.decrypt_to_file(dest_file, filesystem=REAL_FS)
         dec.close()
         dec = base.FileDecryptor(path=enc_file, filesystem=REAL_FS)
-        dec.decrypt_to_file(dest_file, overwrite=True)
+        dec.decrypt_to_file(dest_file, filesystem=REAL_FS, overwrite=True)
         dec.close()
         with open(dest_file, "rb") as tfd:
             dec_data = tfd.read()
@@ -282,7 +282,9 @@ class FileEncryptorTest(unittest.TestCase):
             msg="File encryption of file bigger than limit did not raise an error",
         ):
             encryptor.encrypt_to_file(
-                os.path.join(self.test_dir, "test.enc"), overwrite=True
+                os.path.join(self.test_dir, "test.enc"),
+                filesystem=REAL_FS,
+                overwrite=True,
             )
 
         encryptor.close()
