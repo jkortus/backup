@@ -99,6 +99,11 @@ class FSDirectory:
         if self.is_encrypted:
             self.decrypted_name = decrypt_filename(self.name)
 
+    @property
+    def abs_path(self):
+        """returns absolute path to the directory within its filesystem"""
+        return os.path.join(self.parent, self.name)
+
     def add_directory(self, directory: Self):
         """adds a directory (FSDirectory) to the directory tree"""
         if not isinstance(directory, self.__class__):
@@ -399,16 +404,17 @@ class FileEncryptor:
             self._fd.close()
             self._fd = None
 
-    def encrypt_to_file(self, destination, overwrite=False):
+    def encrypt_to_file(self, destination, filesystem=TARGET_FS, overwrite=False):
         """
         encrypts the underlying file and writes it to destination
         using incremental reads
         """
-        if self.filesystem.exists(destination) and not overwrite:
+        # TODO: filesystem as a mandatory param
+        if filesystem.exists(destination) and not overwrite:
             raise IOError(
                 f"Destination file {destination} exists and overwrite is disabled."
             )
-        with self.filesystem.open(destination, "wb") as f:
+        with filesystem.open(destination, "wb") as f:
             try:
                 while True:
                     data = self.read(BUFFER_SIZE_BYTES)
@@ -417,7 +423,7 @@ class FileEncryptor:
                     f.write(data)
             except IOError as e:
                 log.error(f"Error encountered: {e}")
-                self.filesystem.unlink(
+                filesystem.unlink(
                     destination
                 )  # no not keep partial files present on the disk
                 raise
@@ -494,19 +500,20 @@ class FileDecryptor:
             ) from ex
         return decrypted_data
 
-    def decrypt_to_file(self, destination, overwrite=False):
+    def decrypt_to_file(self, destination, filesystem=TARGET_FS, overwrite=False):
         """
         decrypts the underlying file and writes it to destination
         using incremental reads
         """
-        if self.filesystem.exists(destination) and not overwrite:
+        # TODO: filesystem as a mandatory param
+        if filesystem.exists(destination) and not overwrite:
             raise IOError(
                 f"Destination file {destination} exists and overwrite is disabled."
             )
         if not self.crypto_init_done:
             self._init_crypto()
 
-        with self.filesystem.open(destination, "wb") as f:
+        with filesystem.open(destination, "wb") as f:
             while True:
                 data = self.read(BUFFER_SIZE_BYTES)
                 if not data:
@@ -695,79 +702,62 @@ def decrypt_filename(encrypted_filename: bytes) -> str:
         raise
 
 
-def encrypt_directory(source, destination):
+def encrypt_directory(source: FSDirectory, destination: FSDirectory):
     """encrypts all files and directories in directory and writes them to destination"""
     log.debug(f"encrypt_directory({source} -> {destination})")
-    TARGET_FS.makedirs(destination, exist_ok=True)
+    if not (isinstance(source, FSDirectory) and isinstance(destination, FSDirectory)):
+        raise TypeError(
+            f"Invalid arg for source or destination, expected FSDirectory, "
+            f"got {type(source)} and {type(destination)}"
+        )
+    destination.filesystem.makedirs(destination.abs_path, exist_ok=True)
     # use one key for all files in a run. Different runs (for new files for instance)
     # will use different keys
     key = get_key()
-    if not SOURCE_FS.is_dir(source):
-        raise ValueError(f"Directory {source} does not exist or is not a directory")
-
-    for root, dirs, files in SOURCE_FS.walk(source):
-        root = source
-        # existing_dirs, existing_files = list_encrypted_directory(
-        #    destination, password=password
-        # )
-        dir_object = FSDirectory.from_filesystem(
-            path=destination, filesystem=TARGET_FS, recursive=False
-        )
-        existing_dirs = {}
-        for _d in dir_object.directories:
-            existing_dirs[_d.decrypted_name] = _d.name
-        existing_files = {}
-        for _f in dir_object.files:
-            existing_files[_f.decrypted_name] = _f.name
-
-        log.debug(f"Source dirs in [{source}]: {dirs} Source files: {files}")
-        log.debug(
-            f"Existing encrypted dirs in [{destination}]: {existing_dirs} "
-            f"Existing files: {existing_files}"
+    if not source.filesystem.is_dir(source.abs_path):
+        raise ValueError(
+            f"Directory {source.name} does not exist or is not a directory"
         )
 
-        for fname in files:
-            abs_fname = os.path.join(root, fname)
-            if fname in existing_files:
-                log.info(
-                    f"Skipping already encrypted file {abs_fname} "
-                    f"-> {existing_files[fname]}"
-                )
-                report_event("skip_file", abs_fname, existing_files[fname])
-                continue
-
-            encrypted_filename = encrypt_filename(key, fname).decode("utf-8")
-            abs_enc_fname = os.path.join(destination, encrypted_filename)
-            log.info(f"Encrypting file {os.path.join(source,fname)} -> {abs_enc_fname}")
-            file_encryptor = FileEncryptor(abs_fname, key, filesystem=SOURCE_FS)
-            report_event("encrypt_file", abs_fname, abs_enc_fname)
-            file_encryptor.encrypt_to_file(abs_enc_fname)
-            file_encryptor.close()
-        for dname in dirs:
-            abs_dname = os.path.join(root, dname)
-            if dname in existing_dirs:
-                abs_enc_dname = os.path.join(destination, existing_dirs[dname])
-                log.info(
-                    f"Skipping already encrypted directory "
-                    f"{os.path.join(source,dname)} -> {abs_enc_dname}"
-                )
-                report_event("skip_directory", abs_dname, abs_enc_dname)
-
-            else:
-                encrypted_dirname = encrypt_filename(key, dname).decode("utf-8")
-                abs_enc_dname = os.path.join(destination, encrypted_dirname)
-                log.info(
-                    f"Encrypting directory {os.path.join(source,dname)} -> "
-                    f"{abs_enc_dname}"
-                )
-                report_event("encrypt_directory", abs_dname, abs_enc_dname)
-                with TARGET_FS.cwd_cm(destination):
-                    TARGET_FS.mkdir(encrypted_dirname)
-            encrypt_directory(
-                source=abs_dname,
-                destination=abs_enc_dname,
+    for fname in source.file_names():
+        source_abs_fname = os.path.join(source.abs_path, fname)
+        target_abs_fname = os.path.join(destination.abs_path, fname)
+        if fname in destination.file_names():
+            log.info(
+                f"Skipping already encrypted file {source_abs_fname} "
+                f"-> {target_abs_fname}"
             )
-        break  # one level in each call, the rest gets handled in the recurisve calls
+            report_event("skip_file", source_abs_fname, target_abs_fname)
+            continue
+
+        encrypted_filename = encrypt_filename(key, fname).decode("utf-8")
+        abs_enc_fname = os.path.join(destination.abs_path, encrypted_filename)
+        log.info(f"Encrypting file {source_abs_fname} -> {abs_enc_fname}")
+        file_encryptor = FileEncryptor(source_abs_fname, key, filesystem=SOURCE_FS)
+        report_event("encrypt_file", source_abs_fname, abs_enc_fname)
+        file_encryptor.encrypt_to_file(abs_enc_fname, filesystem=destination.filesystem)
+        file_encryptor.close()
+
+    for directory in source.dir_names():
+        source_abs_dir_name = os.path.join(source.abs_path, directory)
+        target_abs_dir_name = os.path.join(destination.abs_path, directory)
+        if directory in destination.dir_names():
+            log.info(
+                f"Skipping already encrypted directory "
+                f"{source_abs_dir_name} -> {target_abs_dir_name}"
+            )
+            report_event("skip_directory", source_abs_dir_name, target_abs_dir_name)
+            next_target = destination.get_directory(directory)
+        else:
+            encrypted_dirname = encrypt_filename(key, directory).decode("utf-8")
+            abs_enc_dirname = os.path.join(destination.abs_path, encrypted_dirname)
+            log.info(f"Encrypting directory {source_abs_dir_name} -> {abs_enc_dirname}")
+            report_event("encrypt_directory", source_abs_dir_name, abs_enc_dirname)
+            destination.filesystem.mkdir(abs_enc_dirname)
+            next_target = FSDirectory.from_filesystem(
+                abs_enc_dirname, filesystem=destination.filesystem
+            )
+        encrypt_directory(source.get_directory(directory), next_target)
 
 
 def decrypt_directory(source, destination):

@@ -23,7 +23,13 @@ class RealFilesystem:
 
     def mkdir(self, dirpath: str):
         """creates diretories"""
-        os.mkdir(dirpath)
+        name = os.path.basename(dirpath)
+        parent = os.path.dirname(dirpath)
+        if parent:
+            with self.cwd_cm(parent):
+                os.mkdir(name)
+        else:
+            os.mkdir(dirpath)
 
     def makedirs(self, dirpath: str, exist_ok: bool = False):
         """creates diretories"""

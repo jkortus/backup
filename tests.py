@@ -355,7 +355,10 @@ class DirectoryEncryptionTest(unittest.TestCase):
 
     def test_encrypt_empty_directory(self):
         """Test encryption of empty directory"""
-        base.encrypt_directory(self.source_dir, self.encrypted_dir)
+        base.encrypt_directory(
+            FSDirectory.from_filesystem(self.source_dir, filesystem=REAL_FS),
+            FSDirectory.from_filesystem(self.encrypted_dir, filesystem=REAL_FS),
+        )
         _, dirs, files = next(os.walk(self.encrypted_dir))
         self.assertEqual(dirs, [])
         self.assertEqual(files, [])
@@ -363,7 +366,10 @@ class DirectoryEncryptionTest(unittest.TestCase):
     def test_encrypt_directory(self):
         """Test encryption of directory"""
         create_fs_tree(self.source_dir)
-        base.encrypt_directory(self.source_dir, self.encrypted_dir)
+        base.encrypt_directory(
+            FSDirectory.from_filesystem(self.source_dir, filesystem=REAL_FS),
+            FSDirectory.from_filesystem(self.encrypted_dir, filesystem=REAL_FS),
+        )
         # check that number of files on each level is the same
         # and that the content is not the same (i.e. encrypted)
         source_walker = os.walk(self.source_dir)
@@ -371,7 +377,11 @@ class DirectoryEncryptionTest(unittest.TestCase):
         while True:
             try:
                 source_root, source_dirs, source_files = next(source_walker)
+                source_dirs.sort()
+                source_files.sort()
                 encrypted_root, encrypted_dirs, encrypted_files = next(encrypted_walker)
+                encrypted_dirs.sort()
+                encrypted_files.sort()
             except StopIteration:
                 break
             self.assertEqual(len(source_files), len(encrypted_files))
@@ -388,25 +398,36 @@ class DirectoryEncryptionTest(unittest.TestCase):
     def test_decrypt_directory(self):
         """encrypt, decrypt and compare with source for one-to-one match across the tree"""
         create_fs_tree(self.source_dir)
-        base.encrypt_directory(self.source_dir, self.encrypted_dir)
+        base.encrypt_directory(
+            FSDirectory.from_filesystem(self.source_dir, filesystem=REAL_FS),
+            FSDirectory.from_filesystem(self.encrypted_dir, filesystem=REAL_FS),
+        )
         base.decrypt_directory(self.encrypted_dir, self.decrypted_dir)
         source_walker = os.walk(self.source_dir)
         decrypted_walker = os.walk(self.decrypted_dir)
         while True:
             try:
                 source_root, source_dirs, source_files = next(source_walker)
+                source_dirs.sort()
+                source_files.sort()
                 decrypted_root, decrypted_dirs, decrypted_files = next(decrypted_walker)
+                decrypted_dirs.sort()
+                decrypted_files.sort()
             except StopIteration:
                 break
             self.assertEqual(len(source_files), len(decrypted_files))
             self.assertEqual(len(source_dirs), len(decrypted_dirs))
-            for source_file, decrypted_file in zip(source_files, decrypted_files):
+            for source_file, decrypted_file in zip(
+                sorted(source_files), sorted(decrypted_files)
+            ):
                 with open(os.path.join(source_root, source_file), "rb") as tfd:
                     source_data = tfd.read()
                 with open(os.path.join(decrypted_root, decrypted_file), "rb") as tfd:
                     decrypted_data = tfd.read()
                 self.assertEqual(
-                    source_data, decrypted_data, "Decrypted data does not match source"
+                    source_data,
+                    decrypted_data,
+                    f"Decrypted data does not match source {os.path.join(source_root, source_file)} vs {os.path.join(decrypted_root, decrypted_file)}",
                 )
 
     def test_structures_larger_than_max_path_limits(self):
@@ -435,7 +456,10 @@ class DirectoryEncryptionTest(unittest.TestCase):
             tfd.write(b"test")
         abs_filename = os.path.join(os.getcwd(), filename)
         log.debug(f"Abs path length of test filename: {len(abs_filename)}")
-        base.encrypt_directory(source_dir, dest_dir)
+        base.encrypt_directory(
+            FSDirectory.from_filesystem(source_dir, filesystem=REAL_FS),
+            FSDirectory.from_filesystem(dest_dir, filesystem=REAL_FS),
+        )
         base.decrypt_directory(dest_dir, dec_dir)
 
         source_walker = os.walk(source_dir)
@@ -443,7 +467,11 @@ class DirectoryEncryptionTest(unittest.TestCase):
         while True:
             try:
                 source_root, source_dirs, source_files = next(source_walker)
+                source_dirs.sort()
+                source_files.sort()
                 decrypted_root, decrypted_dirs, decrypted_files = next(decrypted_walker)
+                decrypted_dirs.sort()
+                decrypted_files.sort()
             except StopIteration:
                 break
             self.assertEqual(
@@ -483,7 +511,10 @@ class DirectoryEncryptionTest(unittest.TestCase):
         # create fifo
         # os.mkfifo(os.path.join(self.source_dir, "fifo"))
         # fifo and symlinks are enough
-        base.encrypt_directory(self.source_dir, self.encrypted_dir)
+        base.encrypt_directory(
+            FSDirectory.from_filesystem(self.source_dir, filesystem=REAL_FS),
+            FSDirectory.from_filesystem(self.encrypted_dir, filesystem=REAL_FS),
+        )
         edir = FSDirectory.from_filesystem(path=self.encrypted_dir, filesystem=REAL_FS)
         self.assertEqual(
             len(edir.file_names()), 1, "Non-regular files were not excluded."
@@ -498,9 +529,15 @@ class DirectoryEncryptionTest(unittest.TestCase):
         a new encrypted name)
         """
         create_fs_tree(self.source_dir)
-        base.encrypt_directory(self.source_dir, self.encrypted_dir)
+        base.encrypt_directory(
+            FSDirectory.from_filesystem(self.source_dir, filesystem=REAL_FS),
+            FSDirectory.from_filesystem(self.encrypted_dir, filesystem=REAL_FS),
+        )
         tree_content = list(os.walk(self.encrypted_dir))
-        base.encrypt_directory(self.source_dir, self.encrypted_dir)
+        base.encrypt_directory(
+            FSDirectory.from_filesystem(self.source_dir, filesystem=REAL_FS),
+            FSDirectory.from_filesystem(self.encrypted_dir, filesystem=REAL_FS),
+        )
         tree_content2 = list(os.walk(self.encrypted_dir))
         self.assertEqual(
             tree_content,
@@ -545,7 +582,10 @@ class DirectoryComparisonTest(unittest.TestCase):
             tfd.write(b"test")
         with open(os.path.join(self.source_dir, "newdir", "file2"), "wb") as tfd:
             tfd.write(b"test2")
-        base.encrypt_directory(self.source_dir, self.encrypted_dir)
+        base.encrypt_directory(
+            FSDirectory.from_filesystem(self.source_dir, filesystem=REAL_FS),
+            FSDirectory.from_filesystem(self.encrypted_dir, filesystem=REAL_FS),
+        )
         dir1 = FSDirectory.from_filesystem(path=self.encrypted_dir, filesystem=REAL_FS)
         dir2 = FSDirectory.from_filesystem(path=self.encrypted_dir, filesystem=REAL_FS)
         self.assertIsNone(
@@ -688,7 +728,10 @@ class DirectoryComparisonTest(unittest.TestCase):
     def test_encrypt_and_compare(self):
         """encrypts a directory and runs a diff on it"""
         dir1 = FSDirectory.from_filesystem(path=self.source_dir, filesystem=REAL_FS)
-        base.encrypt_directory(self.source_dir, self.encrypted_dir)
+        base.encrypt_directory(
+            FSDirectory.from_filesystem(self.source_dir, filesystem=REAL_FS),
+            FSDirectory.from_filesystem(self.encrypted_dir, filesystem=REAL_FS),
+        )
         dir2 = FSDirectory.from_filesystem(path=self.encrypted_dir, filesystem=REAL_FS)
         diff = dir1.one_way_diff(dir2)
         self.assertIsNone(diff, "No difference expected on identical directories")
@@ -921,7 +964,10 @@ class FSDirectoryFilesystemParsingTest(unittest.TestCase):
             "file3": "test3",
         }
         create_fs_tree_from_dict(self.source_dir, tree)
-        base.encrypt_directory(self.source_dir, self.encrypted_dir)
+        base.encrypt_directory(
+            FSDirectory.from_filesystem(self.source_dir, filesystem=REAL_FS),
+            FSDirectory.from_filesystem(self.encrypted_dir, filesystem=REAL_FS),
+        )
         parsed_dir = FSDirectory.from_filesystem(
             path=self.encrypted_dir, filesystem=REAL_FS
         )
@@ -955,7 +1001,10 @@ class FSDirectoryFilesystemParsingTest(unittest.TestCase):
             "file3": "test3",
         }
         create_fs_tree_from_dict(self.source_dir, tree)
-        base.encrypt_directory(self.source_dir, self.encrypted_dir)
+        base.encrypt_directory(
+            FSDirectory.from_filesystem(self.source_dir, filesystem=REAL_FS),
+            FSDirectory.from_filesystem(self.encrypted_dir, filesystem=REAL_FS),
+        )
         parsed_dir = FSDirectory.from_filesystem(
             path=self.encrypted_dir, filesystem=REAL_FS, recursive=False
         )
@@ -992,10 +1041,16 @@ class StatusReporterTest(unittest.TestCase):
         create_fs_tree(source_dir)
         reporter = base.StatusReporter()
         base.STATUS_REPORTER = reporter
-        base.encrypt_directory(source_dir, encrypted_dir)
+        base.encrypt_directory(
+            FSDirectory.from_filesystem(source_dir, filesystem=REAL_FS),
+            FSDirectory.from_filesystem(encrypted_dir, filesystem=REAL_FS),
+        )
         encrypted_count = reporter.files_processed
         self.assertGreater(encrypted_count, 0, "Encrypted files were not reported")
-        base.encrypt_directory(source_dir, encrypted_dir)
+        base.encrypt_directory(
+            FSDirectory.from_filesystem(source_dir, filesystem=REAL_FS),
+            FSDirectory.from_filesystem(encrypted_dir, filesystem=REAL_FS),
+        )
         self.assertEqual(
             reporter.files_processed,  # all skipped will be processed again
             reporter.files_skipped,
@@ -1011,7 +1066,10 @@ class StatusReporterTest(unittest.TestCase):
         os.mkdir(encrypted_dir)
         os.mkdir(decrypted_dir)
         create_fs_tree(source_dir)
-        base.encrypt_directory(source_dir, encrypted_dir)
+        base.encrypt_directory(
+            FSDirectory.from_filesystem(source_dir, filesystem=REAL_FS),
+            FSDirectory.from_filesystem(encrypted_dir, filesystem=REAL_FS),
+        )
         reporter = base.StatusReporter()
         base.STATUS_REPORTER = reporter
         base.decrypt_directory(encrypted_dir, decrypted_dir)
