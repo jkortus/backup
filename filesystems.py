@@ -49,7 +49,7 @@ class Filesystem(ABC):
         """
 
     @abstractmethod
-    def walk(self, directory: str) -> Generator[str, list, list]:
+    def walk(self, path: str) -> Generator[str, list, list]:
         """
         Generator that returns only regular files and dirs and
         ignores symlinks and other special files
@@ -125,34 +125,34 @@ class RealFilesystem(Filesystem):
         finally:
             self.chdir(old_cwd)
 
-    def walk(self, directory: str):
+    def walk(self, path: str):
         """
         Generator that returns only regular files and dirs and
         ignores symlinks and other special files
         """
-        if not self.is_dir(directory):
-            raise IOError(f"Directory {directory} does not exist or is not a directory")
-        with self.cwd_cm(directory):
+        if not self.is_dir(path):
+            raise IOError(f"Directory {path} does not exist or is not a directory")
+        with self.cwd_cm(path):
             for root, dirs, files in os.walk("."):
-                root = directory
+                root = path
                 filtered_dirs = []
                 filtered_files = []
                 for dname in dirs:
                     if os.path.islink(dname):
                         log.warning(
-                            f"Symbolic link {os.path.join(directory, dname)} ignored."
+                            f"Symbolic link {os.path.join(path, dname)} ignored."
                         )
                         continue
                     filtered_dirs.append(dname)
                 for fname in files:
                     if os.path.islink(fname):
                         log.warning(
-                            f"Symbolic link {os.path.join(directory, fname)} ignored."
+                            f"Symbolic link {os.path.join(path, fname)} ignored."
                         )
                         continue
                     if not os.path.isfile(fname):
                         log.warning(
-                            f"Special file {os.path.join(directory, fname)} ignored."
+                            f"Special file {os.path.join(path, fname)} ignored."
                         )
                         continue
                     filtered_files.append(fname)
