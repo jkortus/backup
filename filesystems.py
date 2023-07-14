@@ -71,6 +71,14 @@ class Filesystem(ABC):
     def unlink(self, filepath: str) -> None:
         """removes a file"""
 
+    @abstractmethod
+    def rmdir(self, dirpath: str) -> None:
+        """removes a directory"""
+
+    @abstractmethod
+    def rmtree(self, dirpath: str) -> None:
+        """removes a directory tree recursively"""
+
 
 class RealFilesystem(Filesystem):
     """Class representing a real on-disk filesystem"""
@@ -179,7 +187,15 @@ class RealFilesystem(Filesystem):
     def unlink(self, filepath: str):
         """removes a file"""
         # TODO: make this max path length safe + tests
-        os.unlink(filepath)
+        return os.unlink(filepath)
+
+    def rmdir(self, dirpath: str):
+        """removes a directory"""
+        return os.rmdir(dirpath)
+
+    def rmtree(self, dirpath: str):
+        """removes a directory tree recursively"""
+        return shutil.rmtree(dirpath)
 
 
 def safe_is_dir(path: str):
