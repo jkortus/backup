@@ -410,7 +410,9 @@ class FileEncryptor:
             self._fd.close()
             self._fd = None
 
-    def encrypt_to_file(self, destination: str, filesystem: Type[Filesystem], overwrite=False):
+    def encrypt_to_file(
+        self, destination: str, filesystem: Type[Filesystem], overwrite=False
+    ):
         """
         encrypts the underlying file and writes it to destination
         using incremental reads
@@ -505,7 +507,9 @@ class FileDecryptor:
             ) from ex
         return decrypted_data
 
-    def decrypt_to_file(self, destination: str, filesystem: Type[Filesystem], overwrite=False):
+    def decrypt_to_file(
+        self, destination: str, filesystem: Type[Filesystem], overwrite=False
+    ):
         """
         decrypts the underlying file and writes it to destination
         using incremental reads
@@ -737,7 +741,9 @@ def encrypt_directory(source: FSDirectory, destination: FSDirectory):
         encrypted_filename = encrypt_filename(key, fname).decode("utf-8")
         abs_enc_fname = os.path.join(destination.abs_path, encrypted_filename)
         log.info(f"Encrypting file {source_abs_fname} -> {abs_enc_fname}")
-        file_encryptor = FileEncryptor(source_abs_fname, key, filesystem=source.filesystem)
+        file_encryptor = FileEncryptor(
+            source_abs_fname, key, filesystem=source.filesystem
+        )
         report_event("encrypt_file", source_abs_fname, abs_enc_fname)
         file_encryptor.encrypt_to_file(abs_enc_fname, filesystem=destination.filesystem)
         file_encryptor.close()
