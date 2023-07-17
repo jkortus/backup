@@ -1127,6 +1127,59 @@ class StatusReporterTest(unittest.TestCase):
         )
 
 
+class RealFilesystemTest(unittest.TestCase):
+    """Tests for filesystems"""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="backup-test-")
+        self.fs = RealFilesystem()
+
+    def tearDown(self):
+        shutil.rmtree(self.root)
+
+    def test_max_path_limits(self):
+        """test operations with paths longer than filesystem limits (typically 4096 bytes)"""
+        oversize_path_length = 4096 + 1024
+        max_path_root = self.root
+        fs = self.fs
+        _iter = 0
+        while len(max_path_root) < oversize_path_length:
+            max_path_root = os.path.join(max_path_root, f"{_iter:03d}-dir")
+            _iter += 1
+        fs.makedirs(max_path_root)
+        self.assertTrue(
+            fs.exists(max_path_root), "root does not exist when it should already"
+        )
+        fs.mkdir(os.path.join(max_path_root, "dir1"))
+        testfile = os.path.join(max_path_root, "dir1", "file1")
+        with fs.open(testfile, "wb") as tfd:
+            tfd.write(b"test")
+        with fs.open(testfile, "rb") as tfd:
+            self.assertEqual(tfd.read(), b"test")
+        fs.unlink(testfile)
+        self.assertFalse(fs.exists(testfile))
+        fs.chdir(max_path_root)
+        self.assertEqual(fs.getcwd(), max_path_root)
+        with fs.cwd_cm(max_path_root):
+            fs.mkdir("dir2")
+        self.assertTrue(
+            fs.exists(os.path.join(max_path_root, "dir2")),
+            "directory not created in proper place while using cwd context manager",
+        )
+        fs.rmdir(os.path.join(max_path_root, "dir2"))
+        self.assertFalse(
+            fs.exists(os.path.join(max_path_root, "dir2")),
+        )
+        fs.rmtree(max_path_root)
+        self.assertFalse(fs.exists(max_path_root))
+        walk_data = list(fs.walk(self.root))
+        self.assertIn(
+            "dir1",
+            walk_data[-1][1],
+            "walk probably did not finish at the end of the path",
+        )
+
+
 class VirtualFilesystemTest(unittest.TestCase):
     """Tests for virtual filesystem"""
 

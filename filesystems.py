@@ -433,7 +433,11 @@ class RealFilesystem(Filesystem):
             self.chdir(directory)
             yield
         finally:
-            self.chdir(old_cwd)
+            try:
+                self.chdir(old_cwd)
+            except FileNotFoundError:
+                log.warning("Previous working directory got deleted, returning to /!")
+                self.chdir("/")
 
     def walk(self, path: str):
         """
@@ -483,21 +487,36 @@ class RealFilesystem(Filesystem):
 
     def exists(self, filepath: str):
         """returns True if filepath exists"""
-        # TODO: make this max path length safe + tests
-        return os.path.exists(filepath)
+        parent = os.path.dirname(filepath)
+        if not parent:
+            parent = self.getcwd()
+        with self.cwd_cm(parent):
+            return os.path.exists(os.path.basename(filepath))
 
     def unlink(self, filepath: str):
         """removes a file"""
-        # TODO: make this max path length safe + tests
-        return os.unlink(filepath)
+        parent = os.path.dirname(filepath)
+        if not parent:
+            parent = self.getcwd()
+        with self.cwd_cm(parent):
+            return os.unlink(os.path.basename(filepath))
 
     def rmdir(self, dirpath: str):
         """removes a directory"""
-        return os.rmdir(dirpath)
+        parent = os.path.dirname(dirpath)
+        if not parent:
+            parent = self.getcwd()
+        with self.cwd_cm(parent):
+            return os.rmdir(os.path.basename(dirpath))
 
     def rmtree(self, dirpath: str):
         """removes a directory tree recursively"""
-        return shutil.rmtree(dirpath)
+        parent = os.path.dirname(dirpath)
+        if not parent:
+            parent = self.getcwd()
+        dirname = os.path.basename(dirpath)
+        with self.cwd_cm(parent):
+            shutil.rmtree(dirname)
 
 
 def safe_is_dir(path: str):
@@ -591,6 +610,9 @@ def safe_walker(directory: str):
     if not safe_is_dir(directory):
         raise IOError(f"Directory {directory} does not exist or is not a directory")
     with safe_cwd_cm(directory):
+        # TODO: known bug, os.walk cannot traverse past MAX_PATH_LENGTH
+        # to fix this we'll have to reimplement walk here in a MAX_PATH_LENGTH
+        # aware way
         for root, dirs, files in os.walk("."):
             root = directory
             filtered_dirs = []
