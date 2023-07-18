@@ -111,7 +111,7 @@ class FSDirectory:
             raise ValueError(
                 f"Directory {directory.name} already exists in {self.name}"
             )
-        if directory.parent != self.parent:
+        if directory.parent != os.path.join(self.parent, self.name):
             # warning here, as we expect the caller to be nesting
             # proper directories with proper internals.
             log.warning(
@@ -244,15 +244,17 @@ class FSDirectory:
         directory = cls(path=path, filesystem=filesystem)
         for dname in dirs:
             if recursive:
-                directory.add_directory(
-                    cls.from_filesystem(
-                        path=os.path.join(path, dname), filesystem=filesystem
-                    )
+                new_dir = cls.from_filesystem(
+                    path=os.path.join(path, dname), filesystem=filesystem
                 )
+                new_dir.parent = os.path.join(directory.parent, directory.name)
+                directory.add_directory(new_dir)
             else:
-                directory.add_directory(
-                    FSDirectory(path=os.path.join(path, dname), filesystem=filesystem)
+                new_dir = FSDirectory(
+                    path=os.path.join(path, dname), filesystem=filesystem
                 )
+                new_dir.parent = os.path.join(directory.parent, directory.name)
+                directory.add_directory(new_dir)
         for fname in files:
             directory.add_file(FSFile(name=fname, filesystem=filesystem))
         return directory
