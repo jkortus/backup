@@ -803,6 +803,10 @@ def decrypt_directory(source: FSDirectory, destination: FSDirectory):
 
     for file in source.get_files():
         source_abs_fname = os.path.join(source.abs_path, file.name)
+        if not file.is_encrypted:
+            log.error(f"File {source_abs_fname} is not encrypted! Skipping. ")
+            report_event("skip_file", source_abs_fname, "<unsepcified due to error>")
+            continue
         target_abs_fname = os.path.join(destination.abs_path, file.decrypted_name)
         if file.decrypted_name in destination.file_names():
             log.info(

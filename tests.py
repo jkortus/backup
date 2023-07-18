@@ -585,6 +585,33 @@ class DirectoryEncryptionTest(unittest.TestCase):
             "some files were probably not properly skipped.",
         )
 
+    def test_garbage_in_encrypted_dir(self):
+        """tests behaviour when encrypted dir contains non-encrypted files"""
+        create_fs_tree(self.source_dir)
+        base.encrypt_directory(
+            FSDirectory.from_filesystem(self.source_dir, filesystem=REAL_FS),
+            FSDirectory.from_filesystem(self.encrypted_dir, filesystem=REAL_FS),
+        )
+        self.assertEqual(1, 3)
+        with open(os.path.join(self.encrypted_dir, "garbage"), "wb") as tfd:
+            tfd.write(b"test")
+        # re-encryption should not fail
+        base.encrypt_directory(
+            FSDirectory.from_filesystem(self.source_dir, filesystem=REAL_FS),
+            FSDirectory.from_filesystem(self.encrypted_dir, filesystem=REAL_FS),
+        )
+        enc_dir = FSDirectory.from_filesystem(
+            path=self.encrypted_dir, filesystem=REAL_FS
+        )
+        for directory in enc_dir.directories:
+            if directory.name == "garbage":
+                self.assertEqual(directory.is_encrypted, False)
+        # decryption should not fail either
+        base.decrypt_directory(
+            FSDirectory.from_filesystem(self.encrypted_dir, filesystem=REAL_FS),
+            FSDirectory.from_filesystem(self.decrypted_dir, filesystem=REAL_FS),
+        )
+
 
 class DirectoryComparisonTest(unittest.TestCase):
     """Test directory comparison"""
