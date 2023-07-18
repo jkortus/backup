@@ -547,7 +547,7 @@ class DirectoryEncryptionTest(unittest.TestCase):
             os.path.join(self.source_dir, "symlinkfile"),
         )
         # create fifo
-        # os.mkfifo(os.path.join(self.source_dir, "fifo"))
+        os.mkfifo(os.path.join(self.source_dir, "fifo"))
         # fifo and symlinks are enough
         base.encrypt_directory(
             FSDirectory.from_filesystem(self.source_dir, filesystem=REAL_FS),
@@ -1170,14 +1170,14 @@ class RealFilesystemTest(unittest.TestCase):
         self.assertFalse(
             fs.exists(os.path.join(max_path_root, "dir2")),
         )
-        fs.rmtree(max_path_root)
-        self.assertFalse(fs.exists(max_path_root))
         walk_data = list(fs.walk(self.root))
         self.assertIn(
             "dir1",
-            walk_data[-1][1],
+            walk_data[-2][1],  # -1 is dir1 itself, -2 is its parent
             "walk probably did not finish at the end of the path",
         )
+        fs.rmtree(max_path_root)
+        self.assertFalse(fs.exists(max_path_root))
 
 
 class VirtualFilesystemTest(unittest.TestCase):

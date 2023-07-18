@@ -446,31 +446,31 @@ class RealFilesystem(Filesystem):
         """
         if not self.is_dir(path):
             raise IOError(f"Directory {path} does not exist or is not a directory")
-        with self.cwd_cm(path):
-            for root, dirs, files in os.walk("."):
-                root = path
-                filtered_dirs = []
-                filtered_files = []
-                for dname in dirs:
-                    if os.path.islink(dname):
-                        log.warning(
-                            f"Symbolic link {os.path.join(path, dname)} ignored."
-                        )
-                        continue
-                    filtered_dirs.append(dname)
-                for fname in files:
-                    if os.path.islink(fname):
-                        log.warning(
-                            f"Symbolic link {os.path.join(path, fname)} ignored."
-                        )
-                        continue
-                    if not os.path.isfile(fname):
-                        log.warning(
-                            f"Special file {os.path.join(path, fname)} ignored."
-                        )
-                        continue
-                    filtered_files.append(fname)
-                yield (root, filtered_dirs, filtered_files)
+
+        global_queue = [path]  # str paths
+        while len(global_queue) > 0:
+            path = global_queue.pop(0)
+            with self.cwd_cm(path):
+                dir_objs = os.scandir(".")
+            dirs = []
+            files = []
+            for obj in dir_objs:
+                if obj.is_symlink():
+                    log.warning(
+                        f"Symbolic link {os.path.join(path, obj.name)} ignored."
+                    )
+                    continue
+
+                if obj.is_dir():
+                    dirs.append(obj.name)
+                elif obj.is_file():
+                    files.append(obj.name)
+                else:
+                    # special files end here
+                    log.warning(f"Special file {os.path.join(path, obj.name)} ignored.")
+
+            yield (path, dirs, files)
+            global_queue.extend([os.path.join(path, d) for d in dirs])
 
     def open(self, filepath: str, mode: str = "r", encoding=None):
         """opens a file and returns a file descriptor"""
