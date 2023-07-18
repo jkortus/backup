@@ -10,7 +10,8 @@ import base
 import random
 import string
 from base import EncryptionKey, FSDirectory, FSFile
-from filesystems import RealFilesystem, VirtualFilesystem, VirtualFile
+from filesystems import RealFilesystem, VirtualFilesystem, VirtualFile, VirtualDirectory
+from copy import deepcopy
 
 base.log.setLevel(base.logging.CRITICAL)
 
@@ -893,6 +894,12 @@ class FSDirectoryTest(unittest.TestCase):
             msg="Adding file with different filesystem should raise ValueError",
         ):
             dir1.add_file(file1)
+
+    def test_deepcopy_keeps_filesystem(self):
+        """test that deepcopy keeps the filesystem"""
+        dir1 = FSDirectory(path="root", filesystem=REAL_FS)
+        dir2 = deepcopy(dir1)
+        self.assertEqual(dir1.filesystem, dir2.filesystem)
 
 
 class FSDirectoryFilesystemParsingTest(unittest.TestCase):

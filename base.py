@@ -102,9 +102,10 @@ class FSDirectory:
             raise TypeError(
                 f"Invalid arg for directory, expected {self.__class__}, got {type(directory)}"
             )
-        if directory.filesystem.__class__ != self.filesystem.__class__:
+        if directory.filesystem != self.filesystem:
             raise ValueError(
-                f"Invalid filesystem for directory {directory.name}, expected {self.filesystem.__class__}"
+                f"Invalid filesystem for directory {directory.name}, "
+                f"expected {self.filesystem} got {directory.filesystem}."
             )
         if directory.name in self.dir_names() | self.file_names():
             raise ValueError(
@@ -130,9 +131,10 @@ class FSDirectory:
             )
         if file.name in self.file_names() | self.dir_names():
             raise ValueError(f"File {file.name} already exists in {self.name}")
-        if file.filesystem.__class__ != self.filesystem.__class__:
+        if file.filesystem != self.filesystem:
             raise ValueError(
-                f"Invalid filesystem for file {file.name}, expected {self.filesystem.__class__}"
+                f"Invalid filesystem for file {file.name}, "
+                f"expected {self.filesystem} got {file.filesystem}."
             )
         self.files.append(file)
 
@@ -197,7 +199,9 @@ class FSDirectory:
         """prints the directory structure"""
         print(self.dump(indent=indent))
 
-    def dump(self, indent: int = 2, show_encrypted_fnames=False) -> str:
+    def dump(
+        self, indent: int = 2, show_encrypted_fnames=False, show_filesystem=False
+    ) -> str:
         """returns a string representation of the directory structure"""
         result = ""
         if self.is_encrypted:
@@ -206,10 +210,14 @@ class FSDirectory:
                 display_name += f" (encrypted as: {self.name})"
         else:
             display_name = f"{self.name} (not encrypted)"
+        if show_filesystem:
+            display_name += f" (fs: {self.filesystem})"
         result += f"{' ' * indent}[{display_name}]" "\n"
         for directory in self.directories:
             result += directory.dump(
-                indent=indent + 2, show_encrypted_fnames=show_encrypted_fnames
+                indent=indent + 2,
+                show_encrypted_fnames=show_encrypted_fnames,
+                show_filesystem=show_filesystem,
             )
         for file in self.files:
             if file.is_encrypted:
@@ -218,6 +226,8 @@ class FSDirectory:
                     display_name += f" (encrypted as: {file.name})"
             else:
                 display_name = f"{file.name} (unencrypted)"
+            if show_filesystem:
+                display_name += f" (fs: {file.filesystem})"
             result += f"{' ' * (indent+2)}{display_name} " "\n"
         return result
 
@@ -310,6 +320,18 @@ class FSDirectory:
                 f"Invalid arg for other, expected {self.__class__}, got {type(other)}"
             )
         return self.one_way_diff(other) is None and other.one_way_diff(self) is None
+
+    def __deepcopy__(self, memo):
+        """creates deep copy that will share filesystem reference with original"""
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            if k == "filesystem":
+                setattr(result, k, self.filesystem)
+                continue
+            setattr(result, k, deepcopy(v, memo))
+        return result
 
 
 class EncryptionKey:
