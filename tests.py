@@ -1127,8 +1127,8 @@ class StatusReporterTest(unittest.TestCase):
         )
 
 
-class RealFilesystemTest(unittest.TestCase):
-    """Tests for filesystems"""
+class RealFilesystemPathLimitTest(unittest.TestCase):
+    """Tests for filesystem operations above path length limits"""
 
     def setUp(self):
         self.root = tempfile.mkdtemp(prefix="backup-test-")
@@ -1178,6 +1178,19 @@ class RealFilesystemTest(unittest.TestCase):
         )
         fs.rmtree(max_path_root)
         self.assertFalse(fs.exists(max_path_root))
+
+
+class VirtualFilesystemPathLimitTest(RealFilesystemPathLimitTest):
+    """Tests for filesystem operations above path length limits"""
+
+    def setUp(self):
+        self.fs = VirtualFilesystem()
+        test_dir = "/" + "".join(random.choices(string.ascii_lowercase, k=10))
+        self.root = test_dir
+        self.fs.mkdir(test_dir)
+
+    def tearDown(self):
+        self.fs.rmtree(self.root)
 
 
 class VirtualFilesystemTest(unittest.TestCase):
