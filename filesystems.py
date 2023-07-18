@@ -344,8 +344,9 @@ class VirtualFilesystem(Filesystem):
             parent = self.cwd
         try:
             parent_dir = self._get_dir_object(parent)
-            file = parent_dir.get_file(name)
-            return True
+            fnames = [f.name for f in parent_dir.files]
+            dnames = [d.name for d in parent_dir.dirs]
+            return name in fnames or name in dnames
         except IOError:
             return False
 
