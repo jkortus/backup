@@ -53,8 +53,12 @@ def main():
     )
     parser.add_argument("--debug", action="store_true", help="debug mode")
     parser.add_argument("-v", "--verbose", action="store_true", help="verbose mode")
-    parser.add_argument("--dry-run", action="store_true", help="dry run mode. "
-                        "Everything will be encrypted/decrypted into virtual memory filesystem.")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="dry run mode. "
+        "Everything will be encrypted/decrypted into virtual memory filesystem.",
+    )
     args = parser.parse_args()
 
     base.log.setLevel(logging.WARNING)
