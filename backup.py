@@ -5,7 +5,7 @@ import argparse
 import logging
 import sys
 import base
-from base import FSDirectory
+from base import FSDirectory, init_password
 import filesystems
 from filesystems import RealFilesystem, VirtualFilesystem
 
@@ -15,17 +15,8 @@ log = logging.getLogger(__name__)
 log.setLevel(logging.WARNING)
 
 # pylint: disable=broad-except
-
-
-def set_password(password):
-    """
-    helper function to set password in base module
-    and not duplicate code in main function
-    """
-    if not password:
-        password = base.get_password()
-    # TODO: private member should not be accessed directly
-    base._PASSWORD = password
+# pylint: disable=logging-fstring-interpolation
+# pylint: disable=logging-not-lazy
 
 
 def main():
@@ -81,7 +72,7 @@ def main():
         target_filesystem = VirtualFilesystem()
 
     if args.encrypt:
-        set_password(args.password)
+        init_password(args.password)
         try:
             if not target_filesystem.exists(args.encrypt[1]):
                 target_filesystem.makedirs(args.encrypt[1])
@@ -103,7 +94,7 @@ def main():
             log.error("Error: " + str(ex))
             sys.exit(2)
     elif args.decrypt:
-        set_password(args.password)
+        init_password(args.password)
         if not target_filesystem.exists(args.decrypt[1]):
             target_filesystem.makedirs(args.decrypt[1])
         try:
@@ -125,7 +116,7 @@ def main():
             print("Error: " + str(ex), file=sys.stderr)
             sys.exit(2)
     elif args.list:
-        set_password(args.password)
+        init_password(args.password)
         try:
             directory = FSDirectory.from_filesystem(
                 args.list[0], filesystem=source_filesystem

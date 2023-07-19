@@ -1,26 +1,24 @@
 """ Encrypt files and directories for backup on untrusted storage"""
-import os
 import base64
-import logging
-from typing import Self, Type
 import copy
 import getpass
+import logging
+import os
 from copy import deepcopy
-import filesystems
-from filesystems import (
-    MAX_PATH_LENGTH,
-    MAX_FILENAME_LENGTH,
-    Filesystem,
-)
+from typing import Self, Type
 
 # pylint: disable=logging-fstring-interpolation
+# pylint: disable=
 import cryptography.exceptions
+
+# https://cryptography.io/en/latest/hazmat/primitives/symmetric-encryption/#cryptography.hazmat.primitives.ciphers.modes.GCM
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 # https://cryptography.io/en/latest/hazmat/primitives/key-derivation-functions/#scrypt
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
-# https://cryptography.io/en/latest/hazmat/primitives/symmetric-encryption/#cryptography.hazmat.primitives.ciphers.modes.GCM
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+import filesystems
+from filesystems import MAX_FILENAME_LENGTH, MAX_PATH_LENGTH, Filesystem
 
 logging.basicConfig(level=logging.CRITICAL)
 log = logging.getLogger(__name__)
@@ -328,7 +326,7 @@ class FSDirectory:
         cls = self.__class__
         result = cls.__new__(cls)
         memo[id(self)] = result
-        for k, v in self.__dict__.items():
+        for k, v in self.__dict__.items():  # pylint: disable=invalid-name
             if k == "filesystem":
                 setattr(result, k, self.filesystem)
                 continue
@@ -702,7 +700,9 @@ def decrypt_filename(encrypted_filename: bytes) -> str:
             f"Invalid encrypted filename ({encrypted_filename}). "
             "Too short to get all required metadata."
         )
-    magic_header = decoded[: len(MAGIC_FILENAME_HEADER)]
+    magic_header = decoded[  # pylint: disable=unused-variable
+        : len(MAGIC_FILENAME_HEADER)
+    ]
     header_len = len(MAGIC_FILENAME_HEADER)
     iv = decoded[header_len : IV_SIZE_BYTES + header_len]
     tag = decoded[
@@ -857,6 +857,17 @@ def get_password():
         password = getpass.getpass(prompt="Password: ")
         _PASSWORD = password
         return password
+
+
+def init_password(password: str | None):
+    """
+    helper function for command line utilities
+    If password is given it is used, otherwise it's asked for interactively
+    """
+    global _PASSWORD  # pylint: disable=global-statement
+    if password is None:
+        password = get_password()
+    _PASSWORD = password
 
 
 def get_key(salt: bytes | None = None) -> EncryptionKey:

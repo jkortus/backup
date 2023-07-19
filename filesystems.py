@@ -150,14 +150,14 @@ class VirtualFileHandle(BytesIO):
         if file.is_open:
             raise IOError("File is already open. Concurent access is not supported")
         self.file.is_open = True
-        self.file._open_handle = self
+        self.file.open_handle = self
         super().__init__(self.file.content)
 
     def close(self):
         """closes the file handle"""
         self.file.content = self.getvalue()
         self.file.is_open = False
-        self.file._open_handle = None
+        self.file.open_handle = None
         super().close()
 
 
@@ -168,9 +168,11 @@ class VirtualFile:
         self.name = name
         self.content = b""
         self.is_open = False
-        self._open_handle = None
+        self.open_handle = None
 
-    def open(self, mode: str = "r", encoding=None) -> IO[AnyStr]:
+    def open(
+        self, mode: str = "r", encoding=None  # pylint: disable=unused-argument
+    ) -> IO[AnyStr]:
         """opens a file, binary only modes are supported ATM"""
         if "b" not in mode:
             raise NotImplementedError("Only binary mode is supported")
@@ -186,8 +188,8 @@ class VirtualFile:
 
     def get_size(self) -> int:
         """returns the size of a file"""
-        if self._open_handle is not None:
-            return len(self._open_handle.getvalue())
+        if self.open_handle is not None:
+            return len(self.open_handle.getvalue())
         return len(self.content)
 
 
@@ -288,7 +290,6 @@ class VirtualFilesystem(Filesystem):
             if not self.is_dir(combined_path):
                 self.mkdir(combined_path)
         self.mkdir(dirpath)
-
 
     def getcwd(self) -> str:
         """returns the current working directory"""

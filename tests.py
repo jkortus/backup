@@ -1,17 +1,18 @@
 """ Unit tests for backup tool """
-import os
-import unittest
-from unittest.mock import Mock, patch
-import tempfile
 import base64
-import shutil
 import logging
-import base
+import os
 import random
+import shutil
 import string
-from base import EncryptionKey, FSDirectory, FSFile
-from filesystems import RealFilesystem, VirtualFilesystem, VirtualFile, VirtualDirectory
+import tempfile
+import unittest
 from copy import deepcopy
+from unittest.mock import Mock, patch
+
+import base
+from base import EncryptionKey, FSDirectory, FSFile
+from filesystems import RealFilesystem, VirtualFilesystem
 
 base.log.setLevel(base.logging.CRITICAL)
 
@@ -21,6 +22,7 @@ log.setLevel(logging.WARNING)
 
 
 # pylint: disable=logging-fstring-interpolation
+# pylint: disable=too-many-lines
 
 base.get_password = Mock(return_value="test")
 
@@ -463,7 +465,9 @@ class DirectoryEncryptionTest(unittest.TestCase):
                 self.assertEqual(
                     source_data,
                     decrypted_data,
-                    f"Decrypted data does not match source {os.path.join(source_root, source_file)} vs {os.path.join(decrypted_root, decrypted_file)}",
+                    f"Decrypted data does not match source "
+                    f"{os.path.join(source_root, source_file)} vs "
+                    f"{os.path.join(decrypted_root, decrypted_file)}",
                 )
 
     def test_structures_larger_than_max_path_limits(self):
@@ -1163,6 +1167,8 @@ class StatusReporterTest(unittest.TestCase):
 class RealFilesystemPathLimitTest(unittest.TestCase):
     """Tests for filesystem operations above path length limits"""
 
+    # pylint: disable=invalid-name
+    #         (fd and fs are ok)
     def setUp(self):
         self.root = tempfile.mkdtemp(prefix="backup-test-")
         self.fs = RealFilesystem()
@@ -1229,6 +1235,8 @@ class VirtualFilesystemPathLimitTest(RealFilesystemPathLimitTest):
 class VirtualFilesystemTest(unittest.TestCase):
     """Tests for virtual filesystem"""
 
+    # pylint: disable=invalid-name
+    #         (fd and fs are ok)
     def test_vfs_basics(self):
         """test isdir"""
         vfs = VirtualFilesystem()
