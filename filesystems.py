@@ -278,12 +278,17 @@ class VirtualFilesystem(Filesystem):
         parent = os.path.dirname(dirpath)
         if not parent:
             parent = self.cwd
+        if self.is_dir(dirpath):
+            if not exist_ok:
+                raise IOError(f"Directory {dirpath} already exists")
+            return
         combined_path = ""
         for part in pathlib.PurePath(parent).parts[1:]:
             combined_path = os.path.join(combined_path, part)
             if not self.is_dir(combined_path):
                 self.mkdir(combined_path)
         self.mkdir(dirpath)
+
 
     def getcwd(self) -> str:
         """returns the current working directory"""
