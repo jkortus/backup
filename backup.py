@@ -6,7 +6,8 @@ import logging
 import sys
 import base
 from base import FSDirectory
-from filesystems import RealFilesystem
+import filesystems
+from filesystems import RealFilesystem, VirtualFilesystem
 
 logging.basicConfig()
 
@@ -52,6 +53,8 @@ def main():
     )
     parser.add_argument("--debug", action="store_true", help="debug mode")
     parser.add_argument("-v", "--verbose", action="store_true", help="verbose mode")
+    parser.add_argument("--dry-run", action="store_true", help="dry run mode. "
+                        "Everything will be encrypted/decrypted into virtual memory filesystem.")
     args = parser.parse_args()
 
     base.log.setLevel(logging.WARNING)
@@ -61,12 +64,18 @@ def main():
 
     if args.debug:
         base.log.setLevel(logging.DEBUG)
+        log.setLevel(logging.DEBUG)
+        filesystems.log.setLevel(logging.DEBUG)
 
     status_reporter = base.StatusReporter()
     base.STATUS_REPORTER = status_reporter
-    # real filesystem hardcoded now temporarily
     source_filesystem = RealFilesystem()
-    target_filesystem = RealFilesystem()
+    if not args.dry_run:
+        target_filesystem = RealFilesystem()
+    else:
+        log.info("Dry run mode, using virtual filesystem")
+        target_filesystem = VirtualFilesystem()
+
     if args.encrypt:
         set_password(args.password)
         try:
