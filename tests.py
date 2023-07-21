@@ -322,6 +322,34 @@ class FileEncryptorTest(unittest.TestCase):
 
         encryptor.close()
 
+    def test_encrypt_to_file_with_oversized_path(self):
+        """
+        test encryption with path that exceeds usual
+        max path limit (4096b)
+        """
+        oversize_path_length = 4096 + 1024
+        max_path_root = self.test_dir
+        _iter = 0
+        while len(max_path_root) < oversize_path_length:
+            max_path_root = os.path.join(max_path_root, f"{_iter:03d}-dir")
+            _iter += 1
+        self.filesystem.makedirs(max_path_root)
+        source_dir = os.path.join(max_path_root, "source")
+        encrypted_dir = os.path.join(max_path_root, "encrypted")
+        self.filesystem.mkdir(source_dir)
+        self.filesystem.mkdir(encrypted_dir)
+        # create a test file
+        test_file = os.path.join(source_dir, "test.txt")
+        target_file = os.path.join(encrypted_dir, "test.txt")
+        with self.filesystem.open(test_file, "wb") as tfd:
+            tfd.write(b"test")
+        # encrypt using to_file
+        key = base.get_key()
+        encryptor = base.FileEncryptor(
+            path=test_file, key=key, filesystem=self.filesystem
+        )
+        encryptor.encrypt_to_file(target_file, filesystem=self.filesystem)
+
 
 class FileNameEncryptionTest(unittest.TestCase):
     """Test encryption of filenames"""
