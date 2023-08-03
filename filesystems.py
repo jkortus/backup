@@ -96,7 +96,7 @@ class VirtualDirectory:
         """adds a directory"""
         if name in [d.name for d in self.dirs] or name in [f.name for f in self.files]:
             raise IOError(f"Directory or file {name} already exists")
-        self.dirs.append(VirtualDirectory(name))
+        self.dirs.append(self.__class__(name))
 
     def del_dir(self, name: str):
         """deletes a directory"""
@@ -199,6 +199,8 @@ class VirtualFilesystem(Filesystem):
     def __init__(self):
         self._cwd = "/"  # keep this absolute
         self.root = VirtualDirectory("/")
+        self.dir_class = VirtualDirectory
+        self.file_class = VirtualFile
 
     @property
     def cwd(self) -> str:
@@ -330,7 +332,7 @@ class VirtualFilesystem(Filesystem):
             parent = self.cwd
         parent_dir = self._get_dir_object(parent)
         if non_existent:
-            parent_dir.add_file(VirtualFile(name))
+            parent_dir.add_file(self.file_class(name))
         file = parent_dir.get_file(name)
         return file.open(mode=mode, encoding=encoding)
 
