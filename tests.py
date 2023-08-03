@@ -1310,6 +1310,16 @@ class VirtualFilesystemTest(unittest.TestCase):
         actual = list(walker)
         self.assertEqual(actual, expected)
 
+    def test_relative_paths(self):
+        """Tests basic operations with relative paths"""
+        vfs = VirtualFilesystem()
+        vfs.makedirs("/a/b/c")
+        vfs.chdir("/a")
+        vfs.chdir("b")
+        print(vfs.cwd)
+        vfs.mkdir("c/d")
+        self.assertTrue(vfs.exists("/a/b/c/d"))
+
 
 class VirtualFileEncryptorTest(FileEncryptorTest):
     """Test file encryption"""
