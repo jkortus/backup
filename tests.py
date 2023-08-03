@@ -349,6 +349,7 @@ class FileEncryptorTest(unittest.TestCase):
             path=test_file, key=key, filesystem=self.filesystem
         )
         encryptor.encrypt_to_file(target_file, filesystem=self.filesystem)
+        encryptor.close()
 
 
 class FileNameEncryptionTest(unittest.TestCase):
