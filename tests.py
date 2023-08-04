@@ -1295,6 +1295,9 @@ class VirtualFilesystemTest(unittest.TestCase):
             vfs.open("/a/b/nonexistent", "rb")
         with self.assertRaises(NotImplementedError):
             vfs.open("/file", "w")
+        vfs.chdir("/")
+        vfs.makedirs("x/y")
+        self.assertTrue(vfs.exists("/x/y"))
 
     def test_vfs_walk(self):
         """Tests vfs.walk for results matching os.walk structure"""

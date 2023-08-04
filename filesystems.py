@@ -287,7 +287,7 @@ class VirtualFilesystem(Filesystem):
                 raise IOError(f"Directory {dirpath} already exists")
             return
         combined_path = ""
-        for part in pathlib.PurePath(parent).parts[1:]:
+        for part in pathlib.PurePath(parent).parts:
             combined_path = os.path.join(combined_path, part)
             if not self.is_dir(combined_path):
                 self.mkdir(combined_path)
