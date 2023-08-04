@@ -30,19 +30,8 @@ def get_client():
     return client
 
 
-class AWSFile:
+class AWSFile(VirtualFile):
     """AWS File"""
-
-    def __init__(self, name: str):
-        self.name = name
-
-    def open(self, mode: str = "r", encoding=None) -> IO[AnyStr]:
-        """opens a file"""
-        raise NotImplementedError
-
-    def get_size(self) -> int:
-        """returns size of file"""
-        raise NotImplementedError
 
 
 class AWSDirectory(VirtualDirectory):
@@ -55,10 +44,6 @@ class AWSDirectory(VirtualDirectory):
     def get_file(self, name: str) -> AWSFile:
         """gets a file"""
         return super().get_file(name)
-
-    def add_dir(self, name: str):
-        """adds a directory"""
-        return super().add_dir(name)
 
 
 class AWSFilesystem(VirtualFilesystem):
@@ -104,19 +89,31 @@ class AWSFilesystem(VirtualFilesystem):
             )
         return super().open(filepath, mode, encoding)
 
+    def _get_object_list(self):
+        """Returns a list of object names from the bucket"""
+        log.debug(f"Getting object list from bucket {self.bucket}")
+        paginator = self.client.get_paginator("list_objects_v2")
+        pages = 1
+        response = []
+        for partial_response in paginator.paginate(Bucket=self.bucket):
+            log.debug(f"object list page: {pages}")
+            log.debug(partial_response)
+            pages += 1
+            response.extend(partial_response["Contents"])
+        object_names = [_["Key"] for _ in response]
+        log.debug("object_names:  %s", "\n".join(object_names))
+        return object_names
 
-def test():
-    client = get_client()
-    # list buckets
-    paginator = client.get_paginator("list_objects_v2")
-
-    pages = 1
-    response = []
-    for partial_response in paginator.paginate(Bucket=TARGET_BUCKET):
-        print(f"Page: {pages}")
-        print(partial_response)
-        pages += 1
-        response.extend(partial_response["Contents"])
-
-    # for item in response:
-    #   print(item["Key"])
+    def load(self):
+        """Initializes the filesystem from a list of object names in the bucket"""
+        object_names = self._get_object_list()
+        for object_name in object_names:
+            log.debug("Prosessing object: %s", object_name)
+            if object_name.endswith("/"):
+                self.makedirs(object_name)
+            else:
+                dirname = os.path.dirname(object_name)
+                if dirname:
+                    self.makedirs(dirname, exist_ok=True)
+                filename = os.path.basename(object_name)
+                self._get_dir_object(dirname).add_file(self.file_class(filename))
