@@ -2,6 +2,7 @@
 from __future__ import annotations
 import os
 import pathlib
+from pathlib import Path
 import logging
 import shutil
 from contextlib import contextmanager
@@ -210,6 +211,7 @@ class VirtualFilesystem(Filesystem):
     @cwd.setter
     def cwd(self, path: str) -> None:
         """sets the current working directory, aka chdir"""
+        path = str(Path(path))  # avoid most shenanigans :)
         _path = self._abs_path(path)
         if not self.is_dir(_path):
             raise IOError(f"Directory {path} does not exist")
@@ -217,6 +219,7 @@ class VirtualFilesystem(Filesystem):
 
     def chdir(self, directory: str) -> None:
         """changes the current working directory"""
+        directory = str(Path(directory))  # avoid most shenanigans :)
         self.cwd = directory
 
     def _get_dir_object(self, path: str) -> VirtualDirectory:
@@ -235,6 +238,7 @@ class VirtualFilesystem(Filesystem):
 
     def get_object(self, path: str) -> VirtualDirectory | VirtualFile:
         """returns a VirtualDirectory or VirtualFile object for a given path"""
+        path = str(Path(path))  # avoid most shenanigans :)
         _path = self._abs_path(path)
         if _path == "/":
             return self.root
@@ -261,7 +265,10 @@ class VirtualFilesystem(Filesystem):
 
     def is_dir(self, path: str) -> bool:
         """returns True if path is a directory"""
+        path = str(Path(path))  # avoid most shenanigans :)
         _path = self._abs_path(path)
+        if path == ".":
+            path = self.cwd
         try:
             self._get_dir_object(_path)
         except IOError:
@@ -270,8 +277,12 @@ class VirtualFilesystem(Filesystem):
 
     def mkdir(self, dirpath: str) -> None:
         """creates diretories"""
+        dirpath = str(Path(dirpath))  # avoid most shenanigans :)
+        # now we have non-empty string, name or parent must be non-empty
         name = os.path.basename(dirpath)
         parent = os.path.dirname(dirpath)
+        if name == ".":
+            raise IOError("Cannot create directory with name '.'")
         if not parent:
             parent = self.cwd
         parent_dir = self._get_dir_object(parent)
@@ -279,6 +290,7 @@ class VirtualFilesystem(Filesystem):
 
     def makedirs(self, dirpath: str, exist_ok: bool = False) -> None:
         """creates diretories"""
+        dirpath = str(Path(dirpath))  # avoid most shenanigans :)
         parent = os.path.dirname(dirpath)
         if not parent:
             parent = self.cwd
@@ -303,6 +315,8 @@ class VirtualFilesystem(Filesystem):
         Context manager:
         changes to a directory that is over MAX_PATH_LENGTH
         and then back
+
+        no-op basically in virtual filesystem
         """
         old_cwd = self.cwd
         self.cwd = directory
@@ -311,6 +325,7 @@ class VirtualFilesystem(Filesystem):
 
     def walk(self, path: str) -> Generator[str, list, list]:
         """returns the next directory content triplet as os.walk() would"""
+        path = str(Path(path))  # avoid most shenanigans :)
         global_queue = [path]  # str paths
         while len(global_queue) > 0:
             path = global_queue.pop(0)
@@ -322,6 +337,7 @@ class VirtualFilesystem(Filesystem):
 
     def open(self, filepath: str, mode: str = "r", encoding=None) -> IO[AnyStr]:
         """opens a file and returns a file descriptor"""
+        filepath = str(Path(filepath))  # avoid most shenanigans :)
         non_existent = False
         if not self.exists(filepath):
             non_existent = True
@@ -338,6 +354,7 @@ class VirtualFilesystem(Filesystem):
 
     def get_size(self, filepath: str) -> int:
         """returns the size of a file"""
+        filepath = str(Path(filepath))  # avoid most shenanigans :)
         name, parent = os.path.basename(filepath), os.path.dirname(filepath)
         if not parent:
             parent = self.cwd
@@ -347,6 +364,7 @@ class VirtualFilesystem(Filesystem):
 
     def exists(self, filepath: str) -> bool:
         """returns True if filepath exists"""
+        filepath = str(Path(filepath))  # avoid most shenanigans :)
         name, parent = os.path.basename(filepath), os.path.dirname(filepath)
         if not parent:
             parent = self.cwd
@@ -360,6 +378,7 @@ class VirtualFilesystem(Filesystem):
 
     def unlink(self, filepath: str) -> None:
         """removes a file"""
+        filepath = str(Path(filepath))  # avoid most shenanigans :)
         name, parent = os.path.basename(filepath), os.path.dirname(filepath)
         if not parent:
             parent = self.cwd
@@ -368,6 +387,7 @@ class VirtualFilesystem(Filesystem):
 
     def rmdir(self, dirpath: str) -> None:
         """removes a directory"""
+        dirpath = str(Path(dirpath))  # avoid most shenanigans :)
         if not self.is_dir(dirpath):
             raise IOError(f"Directory {dirpath} does not exist")
         name, parent = os.path.basename(dirpath), os.path.dirname(dirpath)
@@ -381,6 +401,7 @@ class VirtualFilesystem(Filesystem):
 
     def rmtree(self, dirpath: str) -> None:
         """removes a directory tree recursively"""
+        dirpath = str(Path(dirpath))  # avoid most shenanigans :)
         if not self.is_dir(dirpath):
             raise IOError(f"Directory {dirpath} does not exist")
         dir_obj = self.get_object(dirpath)

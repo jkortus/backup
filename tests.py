@@ -1294,10 +1294,36 @@ class VirtualFilesystemTest(unittest.TestCase):
         with self.assertRaises(IOError):
             vfs.open("/a/b/nonexistent", "rb")
         with self.assertRaises(NotImplementedError):
+            # testing requirement that mode must be binary
             vfs.open("/file", "w")
         vfs.chdir("/")
         vfs.makedirs("x/y")
         self.assertTrue(vfs.exists("/x/y"))
+        #        with self.assertRaises(IOError):
+        #            vfs.mkdir("/")
+        with self.assertRaises(IOError):
+            vfs.makedirs("/")
+        vfs.makedirs("/", exist_ok=True)
+        vfs.mkdir("/abc")  # no slash at the end
+        with self.assertRaises(IOError):
+            vfs.mkdir("/abc/")  # slash at the end
+        vfs.rmdir("/abc")  # without a slash
+        vfs.mkdir("/abc/")
+        with self.assertRaises(IOError):
+            vfs.mkdir("/abc")
+        vfs.rmdir("/abc/")  # again, with a slash
+        vfs.mkdir("///abcd")
+        self.assertTrue(vfs.exists("/abcd"))
+        self.assertTrue(vfs.exists("///abcd"))
+        vfs.chdir("/abcd")
+        vfs.mkdir("e/")
+        self.assertTrue(vfs.exists("/abcd/e"))
+        vfs.mkdir("///xy//")
+        self.assertTrue(vfs.exists("/xy"))
+        vfs.makedirs("///ef//gh//")
+        self.assertTrue(vfs.exists("/ef/gh"))
+        with self.assertRaises(IOError):
+            vfs.mkdir("")
 
     def test_vfs_walk(self):
         """Tests vfs.walk for results matching os.walk structure"""
