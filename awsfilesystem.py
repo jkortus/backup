@@ -1,119 +1,176 @@
 """ AWS Filesystem module """
 import os
-from typing import Generator, IO, AnyStr, Self
+from typing import Generator, IO, AnyStr
 from contextlib import contextmanager
 import logging
-import boto3
-from filesystems import VirtualFilesystem, VirtualFile, VirtualDirectory
+from pathlib import Path
+import copy
+import s3fs
+from filesystems import Filesystem
 
 
 logging.basicConfig()
 log = logging.getLogger(__name__)
-log.setLevel(logging.DEBUG)
+log.setLevel(logging.ERROR)
 
-
-TARGET_BUCKET = (
-    "jk-temp-devel-bucket"  # unique across all accounts in aws, use specific names
-    # https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html
-)
-DEFAULT_REGION = "us-east-1"
 AWS_MAX_OBJECT_NAME_LENGTH = 1024  # all paths must be less than this length
+AWS_PROFILE = "rolesanywhere"
+
+# pylint: disable=logging-fstring-interpolation
 
 
-def get_client():
-    """returns an AWS client"""
-    boto3.setup_default_session(profile_name="rolesanywhere")
-    client = boto3.client("sts")
-    response = client.get_caller_identity()
-    client = boto3.client("s3")
-    # log.debug(response)
-    return client
-
-
-class AWSFile(VirtualFile):
-    """AWS File"""
-
-
-class AWSDirectory(VirtualDirectory):
-    """AWS Directory"""
-
-    def add_file(self, file: AWSFile):
-        """adds a file"""
-        return super().add_file(file)
-
-    def get_file(self, name: str) -> AWSFile:
-        """gets a file"""
-        return super().get_file(name)
-
-
-class AWSFilesystem(VirtualFilesystem):
+class AWSFilesystem(Filesystem):
     """AWS Filesystem"""
 
-    def __init__(self, client, bucket, region=DEFAULT_REGION):
-        super().__init__()
-        self.client = client
+    def __init__(self, bucket):
         self.bucket = bucket
-        self.region = region
-        self.root = AWSDirectory("/")
-        self.dir_class = AWSDirectory
-        self.file_class = AWSFile
+        self.s3fs = s3fs.S3FileSystem(profile=AWS_PROFILE)
+        self._cwd = "/"
 
-    def _get_dir_object(self, path: str) -> AWSDirectory:
-        """returns a AWS Directory object for a given path"""
-        return super()._get_dir_object(path)
+    @property
+    def cwd(self) -> str:
+        """returns current working directory"""
+        return self._cwd
 
-    def get_object(self, path: str) -> AWSDirectory | AWSFile:
-        """returns a VirtualDirectory or VirtualFile object for a given path"""
-        return super().get_object(path)
+    @cwd.setter
+    def cwd(self, path: str) -> None:
+        """sets current working directory"""
+        path = self.abs_path(path)
+        if not self.is_dir(path):
+            raise FileNotFoundError(f"Directory does not exist: {path}")
+        self._cwd = path
+
+    def abs_path(self, path: str) -> str:
+        """
+        returns the absolute path of a given path including the bucket name
+        """
+        if path == ".":
+            return self.cwd
+        path = Path(path)
+        if path.is_absolute():
+            return str(path)
+        else:
+            return os.path.join(self.cwd, path)
+
+    def abs_s3_path(self, path: str) -> str:
+        """
+        returns the absolute path of a given path including the bucket name
+        """
+        path = self.abs_path(path)
+        return self.bucket + path
+
+    def is_dir(self, path: str) -> bool:
+        """returns True if path is a directory"""
+        if path == "/":
+            return True
+        fullpath = self.abs_s3_path(path)
+        try:
+            info = self.s3fs.info(fullpath)
+            return info["type"] == "directory"
+        except FileNotFoundError:
+            return False
 
     def mkdir(self, dirpath: str) -> None:
         """creates diretories"""
-        new_abs_path = self._abs_path(dirpath)
-        if (
-            len(new_abs_path)
-            - len(self.root.name)  # root name is not part of the object path in AWS
-            + 1  # +1 for an extra "/" at the end for a directory (aws way to identify a directory)
-            > AWS_MAX_OBJECT_NAME_LENGTH
-        ):
-            raise IOError(
-                f"Path '{new_abs_path}' too long ({len(new_abs_path)}), max allowed size is {AWS_MAX_OBJECT_NAME_LENGTH} "
+        if len(self.abs_path(dirpath)) > AWS_MAX_OBJECT_NAME_LENGTH:
+            # no -1 in above as the directory gets an extra added / at the end
+            raise ValueError(
+                f"Path too long (max {AWS_MAX_OBJECT_NAME_LENGTH}): {dirpath}"
             )
-        return super().mkdir(dirpath)
+        self.s3fs.mkdir(self.abs_s3_path(dirpath))
+
+    def makedirs(self, dirpath: str, exist_ok: bool = False) -> None:
+        """creates diretories"""
+        if len(self.abs_path(dirpath)) > AWS_MAX_OBJECT_NAME_LENGTH:
+            # no -1 in above as the directory gets an extra added / at the end
+            raise ValueError(
+                f"Path too long (max {AWS_MAX_OBJECT_NAME_LENGTH}): {dirpath}"
+            )
+        abs_path = self.abs_path(dirpath)
+        if abs_path == "/":
+            return
+        self.s3fs.mkdirs(self.abs_s3_path(dirpath), exist_ok=exist_ok)
+
+    def getcwd(self) -> str:
+        """returns the current working directory"""
+        return self.cwd
+
+    def chdir(self, directory: str) -> None:
+        """changes the current working directory"""
+        self.cwd = directory  # setter will make this absolute
+
+    @contextmanager
+    def cwd_cm(self, directory: str) -> None:
+        """
+        Context manager:
+        changes to a directory that is over MAX_PATH_LENGTH
+        and then back
+        """
+        old_cwd = self.cwd
+        self.chdir(directory)
+        yield
+        self.chdir(old_cwd)
+
+    def walk(self, path: str) -> Generator[str, list, list]:
+        """
+        Generator that returns only regular files and dirs and
+        ignores symlinks and other special files
+        """
+        queue = [path]
+        while len(queue) > 0:
+            path = queue.pop(0)
+            dirs = []
+            files = []
+            # we need to copy the objects as we're going to modify the structure
+            # below. Without this copy internal s3fs cache will be modified and
+            # cause random trouble later on
+            objects = copy.deepcopy(self.s3fs.ls(self.abs_s3_path(path), detail=True))
+            remove_part = self.abs_s3_path(path)
+            if not remove_part.endswith("/"):
+                remove_part += "/"
+
+            for item in objects:
+                # remove aws bucket name and current path from items' names
+                item["name"] = item["name"].replace(remove_part, "")
+
+            for item in objects:
+                if item["type"] == "directory":
+                    dirs.append(item["name"])
+                elif item["type"] == "file":
+                    files.append(item["name"])
+            yield path, dirs, files
+            queue.extend([os.path.join(path, d) for d in dirs])
 
     def open(self, filepath: str, mode: str = "r", encoding=None) -> IO[AnyStr]:
         """opens a file and returns a file descriptor"""
-        abs_path = self._abs_path(filepath)
-        if len(abs_path) > AWS_MAX_OBJECT_NAME_LENGTH:
-            raise IOError(
-                f"Path '{abs_path}' too long ({len(abs_path)}), max allowed size is {AWS_MAX_OBJECT_NAME_LENGTH} "
+        if len(self.abs_path(filepath)) - 1 > AWS_MAX_OBJECT_NAME_LENGTH:
+            raise ValueError(
+                f"Path too long (max {AWS_MAX_OBJECT_NAME_LENGTH}): {filepath}"
             )
-        return super().open(filepath, mode, encoding)
+        return self.s3fs.open(self.abs_s3_path(filepath), mode=mode, encoding=encoding)
 
-    def _get_object_list(self):
-        """Returns a list of object names from the bucket"""
-        log.debug(f"Getting object list from bucket {self.bucket}")
-        paginator = self.client.get_paginator("list_objects_v2")
-        pages = 1
-        response = []
-        for partial_response in paginator.paginate(Bucket=self.bucket):
-            log.debug(f"object list page: {pages}")
-            log.debug(partial_response)
-            pages += 1
-            response.extend(partial_response["Contents"])
-        object_names = [_["Key"] for _ in response]
-        log.debug("object_names:  %s", "\n".join(object_names))
-        return object_names
+    def get_size(self, filepath: str) -> int:
+        """returns the size of a file"""
+        info = self.s3fs.info(self.abs_s3_path(filepath))
+        return info["size"]
 
-    def load(self):
-        """Initializes the filesystem from a list of object names in the bucket"""
-        object_names = self._get_object_list()
-        for object_name in object_names:
-            log.debug("Prosessing object: %s", object_name)
-            if object_name.endswith("/"):
-                self.makedirs(object_name)
-            else:
-                dirname = os.path.dirname(object_name)
-                if dirname:
-                    self.makedirs(dirname, exist_ok=True)
-                filename = os.path.basename(object_name)
-                self._get_dir_object(dirname).add_file(self.file_class(filename))
+    def exists(self, filepath: str) -> bool:
+        """returns True if filepath exists"""
+        # s3fs.exists returns true only for files, not directories
+        try:
+            self.s3fs.info(self.abs_s3_path(filepath))
+            return True
+        except FileNotFoundError:
+            return False
+
+    def unlink(self, filepath: str) -> None:
+        """removes a file"""
+        self.s3fs.rm(self.abs_s3_path(filepath))
+
+    def rmdir(self, dirpath: str) -> None:
+        """removes a directory"""
+        self.s3fs.rm(self.abs_s3_path(dirpath))
+
+    def rmtree(self, dirpath: str) -> None:
+        """removes a directory tree recursively"""
+        self.s3fs.rm(self.abs_s3_path(dirpath), recursive=True)
