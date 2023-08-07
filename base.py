@@ -66,7 +66,7 @@ class FSFile:
         self.filesystem = filesystem
         self.is_encrypted = is_encrypted(self.name)
         if self.is_encrypted:
-            self.decrypted_name = decrypt_filename(self.name)
+            self.decrypted_name = decrypt_filename(self.name.encode("utf-8"))
 
 
 class FSDirectory:
@@ -87,7 +87,7 @@ class FSDirectory:
         self.directories = []
         self.is_encrypted = is_encrypted(self.name)
         if self.is_encrypted:
-            self.decrypted_name = decrypt_filename(self.name)
+            self.decrypted_name = decrypt_filename(self.name.encode("utf-8"))
 
     @property
     def abs_path(self):
@@ -293,7 +293,11 @@ class FSDirectory:
                     result.add_directory(subresult)
 
         for fname in other.file_names():
-            filename = fname if not is_encrypted(fname) else decrypt_filename(fname)
+            filename = (
+                fname
+                if not is_encrypted(fname)
+                else decrypt_filename(fname.encode("utf-8"))
+            )
             if filename not in self.file_names():
                 if result is None:
                     result = self.__class__(path=self.name, filesystem=self.filesystem)
@@ -678,13 +682,23 @@ def encrypt_filename(key: EncryptionKey, plaintext: str) -> bytes:
             f"MAX_UNENCRYPTED_FILENAME_LENGTH={MAX_UNENCRYPTED_FILENAME_LENGTH} "
             "needs to be lowered."
         )
+    # translation on the result to avoid "=" in the filename
+    # due to aws object name restrictions
+    result = result.replace(b"=", b".")
     return result
 
 
 def decrypt_filename(encrypted_filename: bytes) -> str:
     """Decrypts a filename with the given key and returns a base64 encoded string"""
     # pylint: disable=invalid-name
+    if not isinstance(encrypted_filename, bytes):
+        raise TypeError(
+            f"Invalid arg for encrypted_filename, expected bytes, "
+            f"got {type(encrypted_filename)}"
+        )
     try:
+        # translation of chars back, see encrypt_filename for more info
+        encrypted_filename = encrypted_filename.replace(b".", b"=")
         decoded = base64.urlsafe_b64decode(encrypted_filename)
     except Exception as ex:
         # log.error(f"Failed to decode filename {encrypted_filename}: {ex}")
@@ -896,6 +910,7 @@ def is_encrypted(filename: str):
     # pylint: disable=broad-except
     try:
         # decrypt_filename(filename, password=get_password())
+        filename = filename.replace(".", "=")
         b64_decoded = base64.urlsafe_b64decode(filename)
         if b64_decoded.startswith(MAGIC_FILENAME_HEADER):
             return True

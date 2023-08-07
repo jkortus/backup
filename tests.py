@@ -369,9 +369,11 @@ class FileNameEncryptionTest(unittest.TestCase):
         key = base.get_key()
         filename = "test.txt"
         encrypted_name = base.encrypt_filename(key, filename)
+        encrypted_name = encrypted_name.replace(b".", b"=")
         raw = base64.urlsafe_b64decode(encrypted_name)
         raw = raw[:10] + b"INVALID" + raw[10:]
         encrypted_name = base64.urlsafe_b64encode(raw)
+        encrypted_name = encrypted_name.replace(b"=", b".")
 
         with self.assertRaises(base.DecryptionError):
             base.decrypt_filename(encrypted_name)
