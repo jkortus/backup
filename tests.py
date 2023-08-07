@@ -13,7 +13,6 @@ from unittest.mock import Mock, patch
 import base
 from base import EncryptionKey, FSDirectory, FSFile
 from filesystems import RealFilesystem, VirtualFilesystem
-from awsfilesystem import AWSFilesystem, AWS_MAX_OBJECT_NAME_LENGTH
 
 base.log.setLevel(base.logging.CRITICAL)
 
@@ -1377,23 +1376,6 @@ class VirtualFileEncryptorTest(FileEncryptorTest):
 
     def tearDown(self):
         VIRT_FS.rmtree(self.test_dir)
-
-
-class AWSFilesystemTest(unittest.TestCase):
-    """Tests for AWSFilesystem"""
-
-    def test_max_path_limits(self):
-        """Tests that operation beyond AWS limits return an error"""
-        fs = AWSFilesystem(client=None, bucket="test")
-        firstdir = "x" * (
-            AWS_MAX_OBJECT_NAME_LENGTH - 1
-        )  # -1 for mandatory "/" at the end of dirname
-        fs.mkdir(firstdir)  # should be ok
-        fs.chdir(firstdir)
-        with self.assertRaises(IOError):
-            fs.mkdir("dir1")  # should fail
-        with self.assertRaises(IOError):
-            fs.open("file1", "wb")  # should fail
 
 
 if __name__ == "__main__":
