@@ -1377,5 +1377,115 @@ class VirtualFileEncryptorTest(FileEncryptorTest):
         VIRT_FS.rmtree(self.test_dir)
 
 
+@unittest.skipIf(
+    "TEST_AWS" not in os.environ,
+    "Skipping AWS tests because TEST_AWS environment variable is not defined",
+)
+class S3FileSystemTest(unittest.TestCase):
+    """Test basic filesystem operations on S3 filesystem"""
+
+    def __init__(self, *args, **kwargs):
+        # pylint: disable=import-outside-toplevel
+        from awsfilesystem import AWSFilesystem, AWS_MAX_OBJECT_NAME_LENGTH
+
+        super().__init__(*args, **kwargs)
+        self.vfs = AWSFilesystem("jk-encrypted-backup-ci")
+        self.testdir = (
+            "/"
+            + "backup-ci-test-"
+            + "".join(random.choices(string.ascii_lowercase, k=10))
+        )
+        self.pathlimit = AWS_MAX_OBJECT_NAME_LENGTH
+
+    def tearDown(self):
+        try:
+            self.vfs.rmtree(self.testdir)
+        except Exception as ex:  # pylint: disable=broad-except
+            log.info("Failed to remove test directory (non-fatal error): %s", ex)
+
+    def test_s3_basics(self):
+        """test basic s3 filesystem operations"""
+        vfs = self.vfs
+        # setup of safe space, not done in init just to delay
+        # failures in case of misconfiguration
+        vfs.makedirs(self.testdir)
+
+        # in s3fs dirs are not made if they do not contain any files.
+        # It's tricky as writing to a dir that does not exist fails,
+        # but creating it does not cause is_dir or exist() to return True
+        vfs.mkdir(os.path.join(self.testdir, "dir1"))
+        # basic file/dir exist checks
+        with vfs.open(os.path.join(self.testdir, "dir1", "file1"), "wb") as tfd:
+            tfd.write(b"test")
+        self.assertTrue(vfs.exists(os.path.join(self.testdir, "dir1")))
+        self.assertTrue(vfs.exists(os.path.join(self.testdir, "dir1", "file1")))
+        self.assertTrue(vfs.is_dir(os.path.join(self.testdir, "dir1")))
+        with vfs.open(os.path.join(self.testdir, "dir1", "file1"), "rb") as tfd:
+            self.assertEqual(tfd.read(), b"test")
+        vfs.chdir(self.testdir)
+        # get_size check
+        self.assertEqual(vfs.get_size("dir1/file1"), 4)
+        # relative paths check
+        self.assertTrue(vfs.exists("dir1"))
+        self.assertTrue(vfs.exists("dir1/file1"))
+        self.assertTrue(vfs.is_dir("dir1"))
+        vfs.chdir(self.testdir)
+        # cm check
+        with vfs.cwd_cm(os.path.join(self.testdir, "dir1")):
+            self.assertTrue(vfs.exists("file1"))
+        self.assertEqual(vfs.getcwd(), self.testdir)
+        # unlink check
+        with vfs.open(os.path.join(self.testdir, "dir1", "file2"), "wb") as tfd:
+            tfd.write(b"test2")
+        self.assertTrue(vfs.exists(os.path.join(self.testdir, "dir1", "file2")))
+        vfs.unlink(os.path.join(self.testdir, "dir1", "file2"))
+        self.assertFalse(vfs.exists(os.path.join(self.testdir, "dir1", "file2")))
+        # os.walk check
+        walk = list(vfs.walk(self.testdir))
+        expected = [
+            (self.testdir, ["dir1"], []),
+            (f"{self.testdir}/dir1", [], ["file1"]),
+        ]
+        self.assertEqual(walk, expected)
+        # relative paths walk
+        with vfs.cwd_cm(self.testdir):
+            walk = list(vfs.walk("."))
+            expected = [(".", ["dir1"], []), ("./dir1", [], ["file1"])]
+            self.assertEqual(walk, expected)
+        # s3 path tests
+        with vfs.cwd_cm(self.testdir):
+            self.assertEqual(vfs.abs_path("."), self.testdir)
+            self.assertEqual(vfs.abs_path("dir1"), f"{self.testdir}/dir1")
+            self.assertEqual(
+                vfs.abs_s3_path("dir1"), f"{vfs.bucket}{self.testdir}/dir1"
+            )
+        with self.assertRaises(OSError):
+            vfs.rmdir(os.path.join(self.testdir, "dir1"))
+        # extra dir with file
+        vfs.mkdir(os.path.join(self.testdir, "dir2"))
+        # need a file in a dir so that s3fs actually creates the dir
+        with vfs.open(os.path.join(self.testdir, "dir2", "file1"), "wb") as tfd:
+            tfd.write(b"test")
+        # rmtree test
+        vfs.rmtree(os.path.join(self.testdir, "dir1"))
+        self.assertFalse(vfs.exists(os.path.join(self.testdir, "dir1")))
+        # safety check :)
+        self.assertTrue(vfs.exists(os.path.join(self.testdir, "dir2")))
+        # over limit mkdir
+        dir_str = self.testdir
+        while len(dir_str) < self.pathlimit:
+            dir_str = os.path.join(dir_str, "extralongdirname")
+        max_dir_str = dir_str[: self.pathlimit - 1]
+        vfs.makedirs(os.path.join(self.testdir, max_dir_str))  # must succeed
+        # dirs over path limit
+        with self.assertRaises(OSError):
+            vfs.makedirs(os.path.join(self.testdir, dir_str))
+        # file open over path limit
+        with self.assertRaises(OSError):
+            # with the dir name at the limit anything opened inside
+            # must cause an error
+            vfs.open(os.path.join(self.testdir, max_dir_str, "file1"), "wb")
+
+
 if __name__ == "__main__":
     unittest.main()
