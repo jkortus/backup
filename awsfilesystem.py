@@ -20,7 +20,10 @@ AWS_PROFILE = "rolesanywhere"
 
 
 class AWSFilesystem(Filesystem):
-    """AWS Filesystem"""
+    """
+    S3 Filesystem based on s3fs
+    https://s3fs.readthedocs.io/en/latest/api.html
+    """
 
     def __init__(self, bucket):
         self.bucket = bucket
@@ -71,10 +74,15 @@ class AWSFilesystem(Filesystem):
             return False
 
     def mkdir(self, dirpath: str) -> None:
-        """creates diretories"""
+        """
+        creates diretories
+        Warning: in case the directory does not contain any files later
+                 it might not be created in s3 at all!
+                 This is as expected by the s3fs module.
+        """
         if len(self.abs_path(dirpath)) > AWS_MAX_OBJECT_NAME_LENGTH:
             # no -1 in above as the directory gets an extra added / at the end
-            raise ValueError(
+            raise OSError(
                 f"Path too long (max {AWS_MAX_OBJECT_NAME_LENGTH}): {dirpath}"
             )
         self.s3fs.mkdir(self.abs_s3_path(dirpath))
@@ -83,7 +91,7 @@ class AWSFilesystem(Filesystem):
         """creates diretories"""
         if len(self.abs_path(dirpath)) > AWS_MAX_OBJECT_NAME_LENGTH:
             # no -1 in above as the directory gets an extra added / at the end
-            raise ValueError(
+            raise OSError(
                 f"Path too long (max {AWS_MAX_OBJECT_NAME_LENGTH}): {dirpath}"
             )
         abs_path = self.abs_path(dirpath)
@@ -144,7 +152,7 @@ class AWSFilesystem(Filesystem):
     def open(self, filepath: str, mode: str = "r", encoding=None) -> IO[AnyStr]:
         """opens a file and returns a file descriptor"""
         if len(self.abs_path(filepath)) - 1 > AWS_MAX_OBJECT_NAME_LENGTH:
-            raise ValueError(
+            raise OSError(
                 f"Path too long (max {AWS_MAX_OBJECT_NAME_LENGTH}): {filepath}"
             )
         return self.s3fs.open(self.abs_s3_path(filepath), mode=mode, encoding=encoding)
@@ -169,6 +177,10 @@ class AWSFilesystem(Filesystem):
 
     def rmdir(self, dirpath: str) -> None:
         """removes a directory"""
+        # s3fs.rmdir silently ignores non-empty directory removal
+        empty = self.s3fs.ls(self.abs_s3_path(dirpath)) == []
+        if not empty:
+            raise OSError(f"Directory not empty: {dirpath}")
         self.s3fs.rm(self.abs_s3_path(dirpath))
 
     def rmtree(self, dirpath: str) -> None:
