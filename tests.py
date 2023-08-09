@@ -1348,7 +1348,6 @@ class VirtualFilesystemTest(unittest.TestCase):
         vfs.makedirs("/a/b/c")
         vfs.chdir("/a")
         vfs.chdir("b")
-        print(vfs.cwd)
         vfs.mkdir("c/d")
         self.assertTrue(vfs.exists("/a/b/c/d"))
 
