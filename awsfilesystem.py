@@ -14,7 +14,6 @@ log = logging.getLogger(__name__)
 log.setLevel(logging.ERROR)
 
 AWS_MAX_OBJECT_NAME_LENGTH = 1024  # all paths must be less than this length
-AWS_PROFILE = "rolesanywhere"
 
 # pylint: disable=logging-fstring-interpolation
 
@@ -25,9 +24,9 @@ class AWSFilesystem(Filesystem):
     https://s3fs.readthedocs.io/en/latest/api.html
     """
 
-    def __init__(self, bucket):
+    def __init__(self, bucket, profile):
         self.bucket = bucket
-        self.s3fs = s3fs.S3FileSystem(profile=AWS_PROFILE)
+        self.s3fs = s3fs.S3FileSystem(profile=profile)
         self._cwd = "/"
 
     @property

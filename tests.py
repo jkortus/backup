@@ -1378,8 +1378,9 @@ class VirtualFileEncryptorTest(FileEncryptorTest):
 
 
 @unittest.skipIf(
-    "TEST_AWS" not in os.environ,
-    "Skipping AWS tests because TEST_AWS environment variable is not defined",
+    "S3_BUCKET" not in os.environ or not "AWS_PROFILE" in os.environ,
+    "S3_BUCKET and AWS_PROFILE environment variables must be set to run "
+    "S3FileSystemTest",
 )
 class S3FileSystemTest(unittest.TestCase):
     """Test basic filesystem operations on S3 filesystem"""
@@ -1389,7 +1390,9 @@ class S3FileSystemTest(unittest.TestCase):
         from awsfilesystem import AWSFilesystem, AWS_MAX_OBJECT_NAME_LENGTH
 
         super().__init__(*args, **kwargs)
-        self.vfs = AWSFilesystem("jk-encrypted-backup-ci")
+        self.vfs = AWSFilesystem(
+            os.environ["S3_BUCKET"], profile=os.environ["AWS_PROFILE"]
+        )
         self.testdir = (
             "/"
             + "backup-ci-test-"
