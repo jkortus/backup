@@ -1423,6 +1423,9 @@ class S3FileSystemTest(unittest.TestCase):
         self.assertTrue(vfs.exists(os.path.join(self.testdir, "dir1")))
         self.assertTrue(vfs.exists(os.path.join(self.testdir, "dir1", "file1")))
         self.assertTrue(vfs.is_dir(os.path.join(self.testdir, "dir1")))
+        self.assertFalse(vfs.is_dir(os.path.join(self.testdir, "dir1", "file1")))
+        # non-existent directories still return True
+        self.assertTrue(vfs.is_dir(os.path.join(self.testdir, "dir1", "nonexistent")))
         with vfs.open(os.path.join(self.testdir, "dir1", "file1"), "rb") as tfd:
             self.assertEqual(tfd.read(), b"test")
         vfs.chdir(self.testdir)

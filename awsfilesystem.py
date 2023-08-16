@@ -62,15 +62,21 @@ class AWSFilesystem(Filesystem):
         return self.bucket + path
 
     def is_dir(self, path: str) -> bool:
-        """returns True if path is a directory"""
+        """
+        returns True if path is not a file in S3.
+        S3 does not have directories as such and "directories" are
+        made up on the fly from the object names.
+        """
         if path == "/":
             return True
         fullpath = self.abs_s3_path(path)
         try:
             info = self.s3fs.info(fullpath)
-            return info["type"] == "directory"
+            if info["type"] == "file":
+                return False
+            return True
         except FileNotFoundError:
-            return False
+            return True
 
     def mkdir(self, dirpath: str) -> None:
         """
