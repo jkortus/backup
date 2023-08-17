@@ -39,6 +39,8 @@ def init_s3_from_string(s3_string, profile):
         sys.exit(2)
     bucket = parts[2]
     log.debug(f"S3 detected, using bucket {bucket} and profile {profile}")
+    # process this amount of data in one upload/download loop
+    base.BUFFER_SIZE_BYTES = 1024 * 1024 * 20  # 20 MB
     return awsfilesystem.AWSFilesystem(bucket, profile), "/" + "/".join(parts[3:])
 
 
