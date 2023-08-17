@@ -1406,6 +1406,33 @@ class S3FileSystemTest(unittest.TestCase):
         except Exception as ex:  # pylint: disable=broad-except
             log.info("Failed to remove test directory (non-fatal error): %s", ex)
 
+    def test_s3_write_proxy(self):
+        """Tests that write operations are done through write proxy"""
+        # pylint: disable=invalid-name # pylint does not like "fd" and we do ;)
+        vfs = self.vfs
+        import awsfilesystem  # pylint: disable=import-outside-toplevel
+
+        # assert the actual call
+        with patch.object(awsfilesystem.S3WriteProxy, "__enter__") as mock_enter:
+            with vfs.open(os.path.join(self.testdir, "fileX"), "wb") as fd:
+                fd.write(b"test")
+        mock_enter.assert_called_once()
+
+        # test real-life behavior
+        with vfs.open(os.path.join(self.testdir, "file1"), "wb") as fd:
+            fd.write(b"test")
+            # file should not exist at this moment
+            self.assertFalse(vfs.exists(os.path.join(self.testdir, "file1")))
+        self.assertTrue(vfs.exists(os.path.join(self.testdir, "file1")))
+        # after closing, it should have been uploaded, contents should match
+        with vfs.open(os.path.join(self.testdir, "file1"), "rb") as fd:
+            self.assertEqual(fd.read(), b"test")
+        # overwrite with new data
+        with vfs.open(os.path.join(self.testdir, "file1"), "wb") as fd:
+            fd.write(b"test2")
+        with vfs.open(os.path.join(self.testdir, "file1"), "rb") as fd:
+            self.assertEqual(fd.read(), b"test2")
+
     def test_s3_basics(self):
         """test basic s3 filesystem operations"""
         vfs = self.vfs

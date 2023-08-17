@@ -1,5 +1,6 @@
 """ AWS Filesystem module """
 import os
+from tempfile import mkstemp
 from typing import Generator, IO, AnyStr
 from contextlib import contextmanager
 import logging
@@ -16,6 +17,64 @@ log.setLevel(logging.ERROR)
 AWS_MAX_OBJECT_NAME_LENGTH = 1024  # all paths must be less than this length
 
 # pylint: disable=logging-fstring-interpolation
+
+
+class S3WriteProxy:
+    """
+    Proxy class for S3 writes.
+    Caches all writes to a local file and only writes to S3 when the file is closed.
+    This is to ensure we have all the data before uploading so that we can decide
+    whether all required data has been uploaded and we can create the final s3 object.
+    Otherwise partial uploads would be created as new objects without the user knowing.
+    """
+
+    def __init__(self, s3fs_instance, filepath, temp_path="/tmp"):
+        self.s3fs = s3fs_instance
+        self.s3path = filepath
+        self.local_file = None
+        self.temp_path = temp_path
+        self.fd = None  # pylint: disable=invalid-name
+        self._init_local_storage()
+
+    def _init_local_storage(self):
+        """initializes local storage"""
+        if self.fd is None:
+            _, self.local_file = mkstemp(prefix="s3writeproxy-", dir=self.temp_path)
+            os.close(_)
+            self.fd = open(self.local_file, "wb")
+
+    def close(self, abort=False):
+        """
+        closes the local temporary file and uploads it to S3.
+        Keep in mind that if you interrupt this process S3 will contain
+        partially uploaded object that's not visible in normal object
+        list and you will still be charged for it.
+        See abort_multipart_upload S3 API call for more.
+        """
+        if self.fd is None:
+            return
+        self.fd.close()
+        if not abort:
+            log.info(f"Uploading {self.local_file} to {self.s3path}...")
+            self.s3fs.put_file(self.local_file, self.s3path)
+            log.info(f"Upload of {self.local_file} to {self.s3path} done.")
+        else:
+            log.error(f"Aborting upload of {self.local_file} to {self.s3path}...")
+        os.remove(self.local_file)
+        self.fd = None
+
+    def __enter__(self):
+        return self.fd
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        if exc_type is not None:
+            log.debug(
+                f"Exception occured, aborting upload to S3. {exc_type} {exc_value} {str(traceback)}"
+            )
+            self.close(abort=True)
+        else:
+            self.close()
+        return True
 
 
 class AWSFilesystem(Filesystem):
@@ -160,7 +219,20 @@ class AWSFilesystem(Filesystem):
             raise OSError(
                 f"Path too long (max {AWS_MAX_OBJECT_NAME_LENGTH}): {filepath}"
             )
-        return self.s3fs.open(self.abs_s3_path(filepath), mode=mode, encoding=encoding)
+        # we require only read or write mode
+        # for write mode we return a proxy object to ensure that
+        # partial uploads are not presented as complete files
+        if "r" in mode and "w" in mode:
+            raise ValueError("Cannot open file in read/write mode")
+        if "r" in mode:
+            return self.s3fs.open(
+                self.abs_s3_path(filepath), mode=mode, encoding=encoding
+            )
+        elif "w" in mode:
+            proxy = S3WriteProxy(self.s3fs, self.abs_s3_path(filepath))
+            return proxy
+        else:
+            raise ValueError("Mode must contain r or w.")
 
     def get_size(self, filepath: str) -> int:
         """returns the size of a file"""
