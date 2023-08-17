@@ -1385,20 +1385,26 @@ class VirtualFileEncryptorTest(FileEncryptorTest):
 class S3FileSystemTest(unittest.TestCase):
     """Test basic filesystem operations on S3 filesystem"""
 
+    # pylint: disable=import-outside-toplevel
     def __init__(self, *args, **kwargs):
-        # pylint: disable=import-outside-toplevel
-        from awsfilesystem import AWSFilesystem, AWS_MAX_OBJECT_NAME_LENGTH
+        from awsfilesystem import AWS_MAX_OBJECT_NAME_LENGTH
 
         super().__init__(*args, **kwargs)
-        self.vfs = AWSFilesystem(
-            os.environ["S3_BUCKET"], profile=os.environ["AWS_PROFILE"]
-        )
         self.testdir = (
             "/"
             + "backup-ci-test-"
             + "".join(random.choices(string.ascii_lowercase, k=10))
         )
         self.pathlimit = AWS_MAX_OBJECT_NAME_LENGTH
+
+    def setUp(self):
+        from awsfilesystem import AWSFilesystem
+
+        # this cannot be in init as it would be called by unittest even
+        # if the class is skipped
+        self.vfs = AWSFilesystem(
+            os.environ["S3_BUCKET"], profile=os.environ["AWS_PROFILE"]
+        )
 
     def tearDown(self):
         try:
