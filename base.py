@@ -529,12 +529,16 @@ class FileDecryptor:
         except cryptography.exceptions.InvalidTag as ex:
             log.debug(f"Failed to decrypt file {self.path}: {ex}", exc_info=True)
             raise DecryptionError(
-                f"Failed to decrypt file {self.path}, invalid password given?"
+                f"Failed to decrypt file {self.path}, invalid password given or file is corrupted."
             ) from ex
         return decrypted_data
 
     def decrypt_to_file(
-        self, destination: str, filesystem: Type[Filesystem], overwrite=False
+        self,
+        destination: str,
+        filesystem: Type[Filesystem],
+        overwrite=False,
+        keep_corrupted=False,
     ):
         """
         decrypts the underlying file and writes it to destination
@@ -547,12 +551,19 @@ class FileDecryptor:
         if not self.crypto_init_done:
             self._init_crypto()
 
-        with filesystem.open(destination, "wb") as f:
-            while True:
-                data = self.read(BUFFER_SIZE_BYTES)
-                if not data:
-                    break
-                f.write(data)
+        try:
+            with filesystem.open(destination, "wb") as f:
+                while True:
+                    data = self.read(BUFFER_SIZE_BYTES)
+                    if not data:
+                        break
+                    f.write(data)
+        except DecryptionError as ex:
+            log.error(f"Error encountered: {ex}")
+            if not keep_corrupted:
+                log.error(f"Removing corrupted file {destination}")
+                filesystem.unlink(destination)
+            raise
 
     def close(self):
         """closes the underlying file if open"""
