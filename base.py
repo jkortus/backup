@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
 log.setLevel(logging.CRITICAL)
 filesystems.log.setLevel(logging.CRITICAL)
 
-SCRYPT_N = 2**14
+SCRYPT_N = 2**20
 BUFFER_SIZE_BYTES = 4 * 1024 * 1024
 IV_SIZE_BYTES = 12
 TAG_SIZE_BYTES = 16

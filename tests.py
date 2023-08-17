@@ -29,6 +29,9 @@ base.get_password = Mock(return_value="test")
 REAL_FS = RealFilesystem()
 VIRT_FS = VirtualFilesystem()
 
+# use weaker scrypt parameters for testing
+base.SCRYPT_N = 2**14
+
 
 def create_fs_tree(root, depth=2, files_per_dir=3, dirs_per_dir=2):
     """Create a directory tree for testing"""
