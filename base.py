@@ -202,31 +202,39 @@ class FSDirectory:
     ) -> str:
         """returns a string representation of the directory structure"""
         result = ""
+        encryption_info = ""
         if self.is_encrypted:
             display_name = f"{self.decrypted_name}"
             if show_encrypted_fnames:
-                display_name += f" (encrypted as: {self.name})"
+                encryption_info = f"(encrypted as: {self.name})"
+            else:
+                encryption_info = "(encrypted)"
         else:
-            display_name = f"{self.name} (not encrypted)"
+            display_name = f"{self.name}"
+            encryption_info = " (NOT encrypted)"
         if show_filesystem:
             display_name += f" (fs: {self.filesystem})"
-        result += f"{' ' * indent}[{display_name}]" "\n"
+        result += f"{' ' * indent}[{display_name}] {encryption_info}\n"
         for directory in self.directories:
             result += directory.dump(
                 indent=indent + 2,
                 show_encrypted_fnames=show_encrypted_fnames,
                 show_filesystem=show_filesystem,
             )
+        encryption_info = ""
         for file in self.files:
             if file.is_encrypted:
                 display_name = f"{file.decrypted_name}"
                 if show_encrypted_fnames:
-                    display_name += f" (encrypted as: {file.name})"
+                    encryption_info = f"(encrypted as: {file.name})"
+                else:
+                    encryption_info = "(encrypted)"
             else:
-                display_name = f"{file.name} (unencrypted)"
+                display_name = f"{file.name}"
+                encryption_info = " (NOT encrypted)"
             if show_filesystem:
                 display_name += f" (fs: {file.filesystem})"
-            result += f"{' ' * (indent+2)}{display_name} " "\n"
+            result += f"{' ' * (indent+2)}{display_name} {encryption_info}\n"
         return result
 
     @classmethod
@@ -578,10 +586,10 @@ class StatusReporter:
     about a long running process.
     """
 
-    def __init__(self):
+    def __init__(self, terminal_width=80):
         self.files_processed = 0
         self.files_skipped = 0
-        self.terminal_width = 80
+        self.terminal_width = terminal_width
 
     def event(self, name, *args):
         """reports an event"""
@@ -590,7 +598,7 @@ class StatusReporter:
             #    print("\n")
             self.files_processed += 1
             # seek at start of the line
-            intro = "\rEncrypting file "
+            intro = "Encrypting file "
             replacement = "[...]"
             display_name = args[0]
             if len(intro + display_name) > self.terminal_width:
@@ -601,14 +609,14 @@ class StatusReporter:
                     ]
                 )
             info_line = f"{intro}{display_name}"
-            print(f"{info_line:>{self.terminal_width}}", end="", flush=True)
+            print(f"{info_line}", end="\n", flush=True)
 
         if name == "decrypt_file":
             # if self.files_processed == 0:
             #    print("\n")
             self.files_processed += 1
             # seek at start of the line
-            intro = "\rDecrypting file "
+            intro = "Decrypting file "
             replacement = "[...]"
             display_name = args[0]
             if len(intro + display_name) > self.terminal_width:
@@ -619,11 +627,11 @@ class StatusReporter:
                     ]
                 )
             info_line = f"{intro}{display_name}"
-            print(f"{info_line:>{self.terminal_width}}", end="", flush=True)
+            print(f"{info_line}", end="\n", flush=True)
 
         elif name == "skip_file":
             self.files_skipped += 1
-            intro = "\rSkipping file/dir (already encrypted in target): "
+            intro = "Skipping file/dir (already encrypted in target): "
             replacement = "[...]"
             display_name = args[0]
             if len(intro + display_name) > self.terminal_width:
@@ -634,7 +642,7 @@ class StatusReporter:
                     ]
                 )
             info_line = f"{intro}{display_name}"
-            print(f"{info_line:>{self.terminal_width}}", end="", flush=True)
+            print(f"{info_line}", end="\n", flush=True)
         else:
             log.debug(f"Unknown event ignored: {name} {args}")
 
