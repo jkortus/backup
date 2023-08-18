@@ -4,6 +4,7 @@
 import argparse
 import logging
 import sys
+from shutil import get_terminal_size
 import base
 from base import FSDirectory, init_password
 import filesystems
@@ -44,6 +45,34 @@ def init_s3_from_string(s3_string, profile):
     return awsfilesystem.AWSFilesystem(bucket, profile), "/" + "/".join(parts[3:])
 
 
+def _change_all_loggers_level(level):
+    """Change all loggers level"""
+    # pylint: disable=no-member
+    loggers = [logging.getLogger(name) for name in logging.root.manager.loggerDict]
+    for logger in loggers:
+        print(f"Setting {logger.name} to {level}")
+        logger.setLevel(level)
+
+
+def _setup_logging(args):
+    """Setup logging"""
+
+    if args.verbose:
+        _change_all_loggers_level(logging.INFO)
+        # log.setLevel(logging.INFO)
+        # base.log.setLevel(logging.INFO)
+
+    if args.debug:
+        log.setLevel(logging.DEBUG)
+        base.log.setLevel(logging.DEBUG)
+
+    if args.debug_all:
+        # pylint: disable=no-member
+        loggers = [logging.getLogger(name) for name in logging.root.manager.loggerDict]
+        for logger in loggers:
+            logger.setLevel(logging.DEBUG)
+
+
 def main():
     """Main function"""
     # parse cmdline args
@@ -68,23 +97,16 @@ def main():
         "-p", "--password", metavar="password", type=str, help="password", default=None
     )
     parser.add_argument("--debug", action="store_true", help="debug mode")
+    parser.add_argument("--debug-all", action="store_true", help="extreme debug mode")
     parser.add_argument("-v", "--verbose", action="store_true", help="verbose mode")
     parser.add_argument(
         "--profile", metavar="profile", type=str, help="aws profile", default=None
     )
     args = parser.parse_args()
 
-    base.log.setLevel(logging.WARNING)
+    _setup_logging(args)
 
-    if args.verbose:
-        base.log.setLevel(logging.INFO)
-
-    if args.debug:
-        base.log.setLevel(logging.DEBUG)
-        log.setLevel(logging.DEBUG)
-        filesystems.log.setLevel(logging.DEBUG)
-
-    status_reporter = base.StatusReporter()
+    status_reporter = base.StatusReporter(terminal_width=get_terminal_size()[0])
     base.STATUS_REPORTER = status_reporter
 
     if args.encrypt:
@@ -100,6 +122,7 @@ def main():
             target_filesystem, target_dir = init_s3_from_string(
                 args.encrypt[1], args.profile
             )
+        _setup_logging(args)  # again due to possible s3 imports
         init_password(args.password)
         try:
             if not target_filesystem.exists(target_dir):
@@ -131,7 +154,7 @@ def main():
             target_filesystem, target_dir = init_s3_from_string(
                 args.decrypt[1], args.profile
             )
-
+        _setup_logging(args)  # again due to possible s3 imports
         init_password(args.password)
         if not target_filesystem.exists(target_dir):
             target_filesystem.makedirs(target_dir)
@@ -156,7 +179,7 @@ def main():
             source_filesystem, source_dir = init_s3_from_string(
                 args.list[0], args.profile
             )
-
+        _setup_logging(args)  # again due to possible s3 imports
         init_password(args.password)
         try:
             directory = FSDirectory.from_filesystem(
