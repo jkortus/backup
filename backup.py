@@ -102,12 +102,25 @@ def main():
     parser.add_argument(
         "--profile", metavar="profile", type=str, help="aws profile", default=None
     )
+    parser.add_argument(
+        "--scrypt-n",
+        type=int,
+        help="Key strenght modificator for scrypt. Don't change it if you don't "
+        f"understand it and use default value ({base.SCRYPT_N}). It might be "
+        f"useful to lower this value for testing ({2**14}) to sacrifice "
+        "security for speed.",
+        default=base.SCRYPT_N,
+    )
     args = parser.parse_args()
 
     _setup_logging(args)
 
     status_reporter = base.StatusReporter(terminal_width=get_terminal_size()[0])
     base.STATUS_REPORTER = status_reporter
+
+    if args.scrypt_n is not None:
+        log.info(f"Setting scrypt_n to {args.scrypt_n}")
+        base.SCRYPT_N = args.scrypt_n
 
     if args.encrypt:
         source_filesystem = RealFilesystem()
