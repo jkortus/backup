@@ -6,6 +6,7 @@ import random
 import shutil
 import string
 import tempfile
+import pathlib
 import unittest
 from copy import deepcopy
 from unittest.mock import Mock, patch
@@ -421,6 +422,49 @@ class DirectoryEncryptionTest(unittest.TestCase):
         # return back to original, as some of our tests might change
         # the cwd and delete it afterwards
         os.chdir(self.cwd)
+
+    def test_fsdirectory_listings_and_paths(self):
+        """test FSDirectory.abs_decrypted_path and to_path_list"""
+        tree = {
+            "dir1": {"dir-1-1": {}, "dir-1-2": {"file-1-2": "test"}, "file1": "test"},
+            "dir2": {"file2": "test2"},
+            "file3": "test3",
+        }
+        create_fs_tree_from_dict(self.source_dir, tree)
+        fs_dir = FSDirectory.from_filesystem(self.source_dir, filesystem=REAL_FS)
+        list_items = fs_dir.to_path_list()
+        unencrypted_paths = [_[0] for _ in list_items]
+        self.assertEqual(len(list_items), 8)
+        for item in list_items:
+            # not encrypted, both paths should be equal
+            self.assertEqual(item[0], item[1])
+        enc_dir = FSDirectory.from_filesystem(self.encrypted_dir, filesystem=REAL_FS)
+        base.encrypt_directory(fs_dir, enc_dir)
+        # reread
+        enc_dir = FSDirectory.from_filesystem(self.encrypted_dir, filesystem=REAL_FS)
+        list_items = enc_dir.to_path_list()
+        self.assertEqual(len(list_items), 8)
+        for item in list_items:
+            # not encrypted, both paths should be equal
+            self.assertNotEqual(item[0], item[1])
+
+        encrypted_plain_paths = [_[0] for _ in list_items]
+        # no new paths, no path missing
+        self.assertEqual(
+            sorted([_.replace(self.source_dir, "") for _ in unencrypted_paths]),
+            sorted([_.replace(self.encrypted_dir, "") for _ in encrypted_plain_paths]),
+        )
+        # check for correctness
+        for item in list_items:
+            # make sure that the paths actually exist
+            self.assertTrue(
+                os.path.exists(item[0].replace(self.encrypted_dir, self.source_dir)),
+            )
+            self.assertTrue(os.path.exists(item[1]))
+        # compare the result to the actual filesystem
+        pathlist = list(map(str, pathlib.Path(self.source_dir).glob("**/*")))
+        for path in pathlist:
+            self.assertIn(path, unencrypted_paths)
 
     def test_encrypt_empty_directory(self):
         """Test encryption of empty directory"""
