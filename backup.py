@@ -4,10 +4,10 @@
 import argparse
 import logging
 import sys
+import os
 from shutil import get_terminal_size
 import base
 from base import FSDirectory, init_password
-import filesystems
 from filesystems import RealFilesystem
 
 logging.basicConfig()
@@ -138,12 +138,35 @@ def main():
         _setup_logging(args)  # again due to possible s3 imports
         init_password(args.password)
         try:
+            if not source_filesystem.exists(source_dir):
+                log.error(f"Source directory {source_dir} does not exist.")
+                sys.exit(1)
             if not target_filesystem.exists(target_dir):
                 target_filesystem.makedirs(target_dir)
-            base.encrypt_directory(
-                FSDirectory.from_filesystem(source_dir, filesystem=source_filesystem),
-                FSDirectory.from_filesystem(target_dir, filesystem=target_filesystem),
-            )
+            if target_filesystem.is_dir(source_dir):
+                base.encrypt_directory(
+                    FSDirectory.from_filesystem(
+                        source_dir, filesystem=source_filesystem
+                    ),
+                    FSDirectory.from_filesystem(
+                        target_dir, filesystem=target_filesystem
+                    ),
+                )
+            else:
+                # assume source_dir is a file
+                fname = os.path.basename(source_dir)
+                encrypted_dir = FSDirectory.from_filesystem(
+                    target_dir, filesystem=target_filesystem, recursive=False
+                )
+                if fname in encrypted_dir.file_names():
+                    log.error(
+                        f"File {source_dir} already exists in {target_dir}. "
+                        "Please delete it first."
+                    )
+                    sys.exit(1)
+                base.encrypt_file(
+                    source_dir, source_filesystem, target_dir, target_filesystem
+                )
             print(
                 f"\nEncryption successfully finished. "
                 f"Encrypted files: {status_reporter.files_processed}"
@@ -169,13 +192,28 @@ def main():
             )
         _setup_logging(args)  # again due to possible s3 imports
         init_password(args.password)
-        if not target_filesystem.exists(target_dir):
-            target_filesystem.makedirs(target_dir)
         try:
-            base.decrypt_directory(
-                FSDirectory.from_filesystem(source_dir, filesystem=source_filesystem),
-                FSDirectory.from_filesystem(target_dir, filesystem=target_filesystem),
-            )
+            if not source_filesystem.exists(source_dir):
+                log.error(f"Source directory {source_dir} does not exist")
+                sys.exit(1)
+            if not target_filesystem.exists(target_dir):
+                target_filesystem.makedirs(target_dir)
+
+            if source_filesystem.is_dir(source_dir):
+                base.decrypt_directory(
+                    FSDirectory.from_filesystem(
+                        source_dir, filesystem=source_filesystem
+                    ),
+                    FSDirectory.from_filesystem(
+                        target_dir, filesystem=target_filesystem
+                    ),
+                )
+            else:
+                # assume it's a file
+                base.decrypt_file(
+                    source_dir, source_filesystem, target_dir, target_filesystem
+                )
+
             print(
                 f"\nEncryption successfully finished. "
                 f"Decrypted files: {status_reporter.files_processed}"
