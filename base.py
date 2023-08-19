@@ -646,7 +646,7 @@ class StatusReporter:
             info_line = f"{intro}{display_name}"
             print(f"{info_line}", end="\n", flush=True)
 
-        if name == "decrypt_file":
+        elif name == "decrypt_file":
             # if self.files_processed == 0:
             #    print("\n")
             self.files_processed += 1
