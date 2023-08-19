@@ -198,7 +198,11 @@ def main():
             directory = FSDirectory.from_filesystem(
                 source_dir, filesystem=source_filesystem
             )
-            directory.pretty_print()
+            for entry in directory.to_path_list():
+                if args.verbose:
+                    print(entry[0], " -> ", entry[1])
+                else:
+                    print(entry[0])
 
         except Exception as ex:
             log.debug(f"Exception: {ex}", exc_info=True)
