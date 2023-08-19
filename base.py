@@ -916,6 +916,70 @@ def decrypt_directory(source: FSDirectory, destination: FSDirectory):
         decrypt_directory(source.get_directory(directory), next_target)
 
 
+def encrypt_file(
+    source_file: str,
+    source_filesystem: type[Filesystem],
+    target_directory: str,
+    target_filesystem: type[Filesystem],
+    overwrite: bool = False,
+):
+    """Encrypts single file to a target directory"""
+    log.debug(f"encrypt_file({source_file} -> {target_directory})")
+    if not source_filesystem.exists(source_file) or source_filesystem.is_dir(
+        source_file
+    ):
+        raise ValueError(f"File {source_file} does not exist or is not a file")
+    if not target_filesystem.exists(target_directory) or not target_filesystem.is_dir(
+        target_directory
+    ):
+        raise ValueError(
+            f"Directory {target_directory} does not exist or is not a directory"
+        )
+    target_filename = encrypt_filename(get_key(), os.path.basename(source_file)).decode(
+        "utf-8"
+    )
+    encryptor = FileEncryptor(
+        path=source_file, key=get_key(), filesystem=source_filesystem
+    )
+    encryptor.encrypt_to_file(
+        os.path.join(target_directory, target_filename),
+        filesystem=target_filesystem,
+        overwrite=overwrite,
+    )
+    report_event("encrypt_file", source_file, target_filename)
+
+
+def decrypt_file(
+    source_file: str,
+    source_filesystem: type[Filesystem],
+    target_directory: str,
+    target_filesystem: type[Filesystem],
+    overwrite: bool = False,
+    keep_corrupted: bool = False,
+):
+    """Decrypts single file to a target directory"""
+    log.debug(f"decrypt_file({source_file} -> {target_directory})")
+    if not source_filesystem.exists(source_file) or source_filesystem.is_dir(
+        source_file
+    ):
+        raise ValueError(f"File {source_file} does not exist or is not a file")
+    if not target_filesystem.exists(target_directory) or not target_filesystem.is_dir(
+        target_directory
+    ):
+        raise ValueError(
+            f"Directory {target_directory} does not exist or is not a directory"
+        )
+    decrypted_fname = decrypt_filename(os.path.basename(source_file).encode("utf-8"))
+    decryptor = FileDecryptor(path=source_file, filesystem=source_filesystem)
+    decryptor.decrypt_to_file(
+        os.path.join(target_directory, decrypted_fname),
+        filesystem=target_filesystem,
+        overwrite=overwrite,
+        keep_corrupted=keep_corrupted,
+    )
+    report_event("decrypt_file", source_file, decrypted_fname)
+
+
 def get_password():
     """asks for password interactively"""
     global _PASSWORD  # pylint: disable=global-statement
