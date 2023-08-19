@@ -403,6 +403,13 @@ class FileNameEncryptionTest(unittest.TestCase):
         self.assertEqual(filename, base.decrypt_filename(encrypted))
         self.assertLessEqual(len(encrypted), base.MAX_FILENAME_LENGTH)
 
+    def test_insecure_filename_decryption(self):
+        """Tests that unsafe filenames are not passed from decryption routine"""
+        harmful_filename = "../../something-important"
+        encrypted = base.encrypt_filename(base.get_key(), harmful_filename)
+        with self.assertRaises(ValueError):
+            decrypted = base.decrypt_filename(encrypted)
+
 
 class DirectoryEncryptionTest(unittest.TestCase):
     """Test encryption of directories"""
@@ -422,6 +429,45 @@ class DirectoryEncryptionTest(unittest.TestCase):
         # return back to original, as some of our tests might change
         # the cwd and delete it afterwards
         os.chdir(self.cwd)
+
+    def test_encrypt_decrypt_file(self):
+        """test for encrypt_file and decrypt_file base methods"""
+        source_file = os.path.join(self.source_dir, "test.txt")
+        random_file = os.path.join(self.source_dir, "random.txt")
+
+        with open(source_file, "wb") as tfd:
+            tfd.write(b"test")
+        with open(random_file, "wb") as tfd:
+            tfd.write(b"test")
+        # dirs not accepted
+        with self.assertRaises(ValueError):
+            base.encrypt_file(self.source_dir, REAL_FS, self.encrypted_dir, REAL_FS)
+        # target must be a dir
+        with self.assertRaises(ValueError):
+            base.encrypt_file(source_file, REAL_FS, random_file, REAL_FS)
+        # encrypt
+        enc_fname = base.encrypt_file(source_file, REAL_FS, self.encrypted_dir, REAL_FS)
+
+        # source must not be a dir
+        with self.assertRaises(ValueError):
+            base.decrypt_file(self.encrypted_dir, REAL_FS, self.decrypted_dir, REAL_FS)
+        # target must be a dir
+        with self.assertRaises(ValueError):
+            base.decrypt_file(
+                os.path.join(self.encrypted_dir, enc_fname),
+                REAL_FS,
+                random_file,
+                REAL_FS,
+            )
+
+        # decrypt
+        base.decrypt_file(
+            os.path.join(self.encrypted_dir, enc_fname),
+            REAL_FS,
+            self.decrypted_dir,
+            REAL_FS,
+        )
+        self.assertTrue(os.path.exists(os.path.join(self.decrypted_dir, "test.txt")))
 
     def test_fsdirectory_listings_and_paths(self):
         """test FSDirectory.abs_decrypted_path and to_path_list"""
