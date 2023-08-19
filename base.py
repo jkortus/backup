@@ -4,8 +4,10 @@ import copy
 import getpass
 import logging
 import os
+import pathlib
 from copy import deepcopy
 from typing import Self, Type
+
 
 # pylint: disable=logging-fstring-interpolation
 # pylint: disable=
@@ -67,6 +69,8 @@ class FSFile:
         self.is_encrypted = is_encrypted(self.name)
         if self.is_encrypted:
             self.decrypted_name = decrypt_filename(self.name.encode("utf-8"))
+        else:
+            self.decrypted_name = self.name
 
 
 class FSDirectory:
@@ -88,11 +92,27 @@ class FSDirectory:
         self.is_encrypted = is_encrypted(self.name)
         if self.is_encrypted:
             self.decrypted_name = decrypt_filename(self.name.encode("utf-8"))
+        else:
+            self.decrypted_name = self.name
 
     @property
     def abs_path(self):
         """returns absolute path to the directory within its filesystem"""
         return os.path.join(self.parent, self.name)
+
+    @property
+    def abs_decrypted_path(self):
+        """returns absolute decrypted path to the directory"""
+        path_parts = pathlib.Path(self.abs_path).parts
+        dec_parts = []
+        assert len(path_parts) > 0  # to justify pylint-disable at the end
+        for part in path_parts:
+            if is_encrypted(part):
+                dec_parts.append(decrypt_filename(part.encode("utf-8")))
+            else:
+                dec_parts.append(part)
+        # pylint: disable=no-value-for-parameter
+        return os.path.join(*dec_parts)
 
     def add_directory(self, directory: Self):
         """adds a directory (FSDirectory) to the directory tree"""
@@ -235,6 +255,21 @@ class FSDirectory:
             if show_filesystem:
                 display_name += f" (fs: {file.filesystem})"
             result += f"{' ' * (indent+2)}{display_name} {encryption_info}\n"
+        return result
+
+    def to_path_list(self) -> list[tuple[str, str]]:
+        """returns a list of tuples (decrypted_path, encrypted_path) for all files and directories in the tree"""
+        result = []
+        for directory in self.directories:
+            result.append((directory.abs_decrypted_path, directory.abs_path))
+            result.extend(directory.to_path_list())
+        for file in self.files:
+            result.append(
+                (
+                    os.path.join(self.abs_decrypted_path, file.decrypted_name),
+                    os.path.join(self.abs_path, file.name),
+                )
+            )
         return result
 
     @classmethod
@@ -611,7 +646,7 @@ class StatusReporter:
             info_line = f"{intro}{display_name}"
             print(f"{info_line}", end="\n", flush=True)
 
-        if name == "decrypt_file":
+        elif name == "decrypt_file":
             # if self.files_processed == 0:
             #    print("\n")
             self.files_processed += 1
@@ -754,7 +789,13 @@ def decrypt_filename(encrypted_filename: bytes) -> str:
         IV_SIZE_BYTES + TAG_SIZE_BYTES + SALT_SIZE_BYTES + header_len :
     ]
     try:
-        return _decrypt(key, iv, ciphertext, tag).decode("utf-8")
+        result = _decrypt(key, iv, ciphertext, tag).decode("utf-8")
+        if not result == os.path.basename(result):
+            raise ValueError(
+                f"Invalid decrypted filename ({result}). "
+                "Potentially unsafe filename!"
+            )
+        return result
     except cryptography.exceptions.InvalidTag as ex:
         log.debug(
             f"Failed to decrypt filename {encrypted_filename}: {ex}", exc_info=True
@@ -879,6 +920,80 @@ def decrypt_directory(source: FSDirectory, destination: FSDirectory):
                 target_abs_dir_name, filesystem=destination.filesystem
             )
         decrypt_directory(source.get_directory(directory), next_target)
+
+
+def encrypt_file(
+    source_file: str,
+    source_filesystem: type[Filesystem],
+    target_directory: str,
+    target_filesystem: type[Filesystem],
+    overwrite: bool = False,
+) -> str:
+    """
+    Encrypts single file to a target directory
+    Note: it does not decrypt the content of the directory so it cannot tell if the
+    file is already encrypted there or not! If you call this function twice with the
+    same arguments, it will create a new encrypted file that will decrypt to the same
+    name.
+    Returns encrypted name of the file
+    """
+    log.debug(f"encrypt_file({source_file} -> {target_directory})")
+    if not source_filesystem.exists(source_file) or source_filesystem.is_dir(
+        source_file
+    ):
+        raise ValueError(f"File {source_file} does not exist or is not a file")
+    if not target_filesystem.exists(target_directory) or not target_filesystem.is_dir(
+        target_directory
+    ):
+        raise ValueError(
+            f"Directory {target_directory} does not exist or is not a directory"
+        )
+    target_filename = encrypt_filename(get_key(), os.path.basename(source_file)).decode(
+        "utf-8"
+    )
+    encryptor = FileEncryptor(
+        path=source_file, key=get_key(), filesystem=source_filesystem
+    )
+    encryptor.encrypt_to_file(
+        os.path.join(target_directory, target_filename),
+        filesystem=target_filesystem,
+        overwrite=overwrite,
+    )
+    encryptor.close()
+    report_event("encrypt_file", source_file, target_filename)
+    return target_filename
+
+
+def decrypt_file(
+    source_file: str,
+    source_filesystem: type[Filesystem],
+    target_directory: str,
+    target_filesystem: type[Filesystem],
+    overwrite: bool = False,
+    keep_corrupted: bool = False,
+):
+    """Decrypts single file to a target directory"""
+    log.debug(f"decrypt_file({source_file} -> {target_directory})")
+    if not source_filesystem.exists(source_file) or source_filesystem.is_dir(
+        source_file
+    ):
+        raise ValueError(f"File {source_file} does not exist or is not a file")
+    if not target_filesystem.exists(target_directory) or not target_filesystem.is_dir(
+        target_directory
+    ):
+        raise ValueError(
+            f"Directory {target_directory} does not exist or is not a directory"
+        )
+    decrypted_fname = decrypt_filename(os.path.basename(source_file).encode("utf-8"))
+    decryptor = FileDecryptor(path=source_file, filesystem=source_filesystem)
+    decryptor.decrypt_to_file(
+        os.path.join(target_directory, decrypted_fname),
+        filesystem=target_filesystem,
+        overwrite=overwrite,
+        keep_corrupted=keep_corrupted,
+    )
+    decryptor.close()
+    report_event("decrypt_file", source_file, decrypted_fname)
 
 
 def get_password():

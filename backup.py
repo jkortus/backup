@@ -4,10 +4,10 @@
 import argparse
 import logging
 import sys
+import os
 from shutil import get_terminal_size
 import base
 from base import FSDirectory, init_password
-import filesystems
 from filesystems import RealFilesystem
 
 logging.basicConfig()
@@ -102,12 +102,25 @@ def main():
     parser.add_argument(
         "--profile", metavar="profile", type=str, help="aws profile", default=None
     )
+    parser.add_argument(
+        "--scrypt-n",
+        type=int,
+        help="Key strenght modificator for scrypt. Don't change it if you don't "
+        f"understand it and use default value ({base.SCRYPT_N}). It might be "
+        f"useful to lower this value for testing ({2**14}) to sacrifice "
+        "security for speed.",
+        default=base.SCRYPT_N,
+    )
     args = parser.parse_args()
 
     _setup_logging(args)
 
     status_reporter = base.StatusReporter(terminal_width=get_terminal_size()[0])
     base.STATUS_REPORTER = status_reporter
+
+    if args.scrypt_n is not None:
+        log.info(f"Setting scrypt_n to {args.scrypt_n}")
+        base.SCRYPT_N = args.scrypt_n
 
     if args.encrypt:
         source_filesystem = RealFilesystem()
@@ -125,12 +138,35 @@ def main():
         _setup_logging(args)  # again due to possible s3 imports
         init_password(args.password)
         try:
+            if not source_filesystem.exists(source_dir):
+                log.error(f"Source directory {source_dir} does not exist.")
+                sys.exit(1)
             if not target_filesystem.exists(target_dir):
                 target_filesystem.makedirs(target_dir)
-            base.encrypt_directory(
-                FSDirectory.from_filesystem(source_dir, filesystem=source_filesystem),
-                FSDirectory.from_filesystem(target_dir, filesystem=target_filesystem),
-            )
+            if target_filesystem.is_dir(source_dir):
+                base.encrypt_directory(
+                    FSDirectory.from_filesystem(
+                        source_dir, filesystem=source_filesystem
+                    ),
+                    FSDirectory.from_filesystem(
+                        target_dir, filesystem=target_filesystem
+                    ),
+                )
+            else:
+                # assume source_dir is a file
+                fname = os.path.basename(source_dir)
+                encrypted_dir = FSDirectory.from_filesystem(
+                    target_dir, filesystem=target_filesystem, recursive=False
+                )
+                if fname in encrypted_dir.file_names():
+                    log.error(
+                        f"File {source_dir} already exists in {target_dir}. "
+                        "Please delete it first."
+                    )
+                    sys.exit(1)
+                base.encrypt_file(
+                    source_dir, source_filesystem, target_dir, target_filesystem
+                )
             print(
                 f"\nEncryption successfully finished. "
                 f"Encrypted files: {status_reporter.files_processed}"
@@ -156,20 +192,35 @@ def main():
             )
         _setup_logging(args)  # again due to possible s3 imports
         init_password(args.password)
-        if not target_filesystem.exists(target_dir):
-            target_filesystem.makedirs(target_dir)
         try:
-            base.decrypt_directory(
-                FSDirectory.from_filesystem(source_dir, filesystem=source_filesystem),
-                FSDirectory.from_filesystem(target_dir, filesystem=target_filesystem),
-            )
+            if not source_filesystem.exists(source_dir):
+                log.error(f"Source directory {source_dir} does not exist")
+                sys.exit(1)
+            if not target_filesystem.exists(target_dir):
+                target_filesystem.makedirs(target_dir)
+
+            if source_filesystem.is_dir(source_dir):
+                base.decrypt_directory(
+                    FSDirectory.from_filesystem(
+                        source_dir, filesystem=source_filesystem
+                    ),
+                    FSDirectory.from_filesystem(
+                        target_dir, filesystem=target_filesystem
+                    ),
+                )
+            else:
+                # assume it's a file
+                base.decrypt_file(
+                    source_dir, source_filesystem, target_dir, target_filesystem
+                )
+
             print(
                 f"\nEncryption successfully finished. "
                 f"Decrypted files: {status_reporter.files_processed}"
                 f" Skipped files: {status_reporter.files_skipped}"
             )
         except Exception as ex:
-            log.exception(ex)
+            log.debug(ex, exc_info=True)
             print("Error: " + str(ex), file=sys.stderr)
             sys.exit(2)
     elif args.list:
@@ -185,7 +236,11 @@ def main():
             directory = FSDirectory.from_filesystem(
                 source_dir, filesystem=source_filesystem
             )
-            directory.pretty_print()
+            for entry in directory.to_path_list():
+                if args.verbose:
+                    print(entry[0], " -> ", entry[1])
+                else:
+                    print(entry[0])
 
         except Exception as ex:
             log.debug(f"Exception: {ex}", exc_info=True)
