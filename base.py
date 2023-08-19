@@ -4,8 +4,10 @@ import copy
 import getpass
 import logging
 import os
+import pathlib
 from copy import deepcopy
 from typing import Self, Type
+
 
 # pylint: disable=logging-fstring-interpolation
 # pylint: disable=
@@ -67,6 +69,8 @@ class FSFile:
         self.is_encrypted = is_encrypted(self.name)
         if self.is_encrypted:
             self.decrypted_name = decrypt_filename(self.name.encode("utf-8"))
+        else:
+            self.decrypted_name = self.name
 
 
 class FSDirectory:
@@ -88,11 +92,27 @@ class FSDirectory:
         self.is_encrypted = is_encrypted(self.name)
         if self.is_encrypted:
             self.decrypted_name = decrypt_filename(self.name.encode("utf-8"))
+        else:
+            self.decrypted_name = self.name
 
     @property
     def abs_path(self):
         """returns absolute path to the directory within its filesystem"""
         return os.path.join(self.parent, self.name)
+
+    @property
+    def abs_decrypted_path(self):
+        """returns absolute decrypted path to the directory"""
+        path_parts = pathlib.Path(self.abs_path).parts
+        dec_parts = []
+        assert len(path_parts) > 0  # to justify pylint-disable at the end
+        for part in path_parts:
+            if is_encrypted(part):
+                dec_parts.append(decrypt_filename(part.encode("utf-8")))
+            else:
+                dec_parts.append(part)
+        # pylint: disable=no-value-for-parameter
+        return os.path.join(*dec_parts)
 
     def add_directory(self, directory: Self):
         """adds a directory (FSDirectory) to the directory tree"""
@@ -235,6 +255,21 @@ class FSDirectory:
             if show_filesystem:
                 display_name += f" (fs: {file.filesystem})"
             result += f"{' ' * (indent+2)}{display_name} {encryption_info}\n"
+        return result
+
+    def to_path_list(self) -> list[tuple[str, str]]:
+        """returns a list of tuples (decrypted_path, encrypted_path) for all files and directories in the tree"""
+        result = []
+        for directory in self.directories:
+            result.append((directory.abs_decrypted_path, directory.abs_path))
+            result.extend(directory.to_path_list())
+        for file in self.files:
+            result.append(
+                (
+                    os.path.join(self.abs_decrypted_path, file.decrypted_name),
+                    os.path.join(self.abs_path, file.name),
+                )
+            )
         return result
 
     @classmethod
