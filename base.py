@@ -922,8 +922,15 @@ def encrypt_file(
     target_directory: str,
     target_filesystem: type[Filesystem],
     overwrite: bool = False,
-):
-    """Encrypts single file to a target directory"""
+) -> str:
+    """
+    Encrypts single file to a target directory
+    Note: it does not decrypt the content of the directory so it cannot tell if the
+    file is already encrypted there or not! If you call this function twice with the
+    same arguments, it will create a new encrypted file that will decrypt to the same
+    name.
+    Returns encrypted name of the file
+    """
     log.debug(f"encrypt_file({source_file} -> {target_directory})")
     if not source_filesystem.exists(source_file) or source_filesystem.is_dir(
         source_file
@@ -946,7 +953,9 @@ def encrypt_file(
         filesystem=target_filesystem,
         overwrite=overwrite,
     )
+    encryptor.close()
     report_event("encrypt_file", source_file, target_filename)
+    return target_filename
 
 
 def decrypt_file(
@@ -977,6 +986,7 @@ def decrypt_file(
         overwrite=overwrite,
         keep_corrupted=keep_corrupted,
     )
+    decryptor.close()
     report_event("decrypt_file", source_file, decrypted_fname)
 
 
