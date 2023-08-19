@@ -789,7 +789,13 @@ def decrypt_filename(encrypted_filename: bytes) -> str:
         IV_SIZE_BYTES + TAG_SIZE_BYTES + SALT_SIZE_BYTES + header_len :
     ]
     try:
-        return _decrypt(key, iv, ciphertext, tag).decode("utf-8")
+        result = _decrypt(key, iv, ciphertext, tag).decode("utf-8")
+        if not result == os.path.basename(result):
+            raise ValueError(
+                f"Invalid decrypted filename ({result}). "
+                "Potentially unsafe filename!"
+            )
+        return result
     except cryptography.exceptions.InvalidTag as ex:
         log.debug(
             f"Failed to decrypt filename {encrypted_filename}: {ex}", exc_info=True
