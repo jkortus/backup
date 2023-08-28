@@ -6,7 +6,7 @@ import logging
 import os
 import pathlib
 from copy import deepcopy
-from typing import Self, Type
+from typing import Dict, Union
 
 
 # pylint: disable=logging-fstring-interpolation
@@ -47,10 +47,12 @@ MAX_UNENCRYPTED_FILENAME_LENGTH = (
     - SALT_SIZE_BYTES
     - len(MAGIC_FILENAME_HEADER)
 )
-_KEYSTORE = {}  # cached keys for detected salts
-_ENCRYPTION_KEY = None  # cached encryption key
-_PASSWORD = None  # cached password
-STATUS_REPORTER = None  # StatusReporter instance for progress monitoring, optional
+_KEYSTORE: Dict[bytes, "EncryptionKey"] = {}  # cached keys for detected salts
+_ENCRYPTION_KEY: Union["EncryptionKey", None] = None  # cached encryption key
+_PASSWORD: str | None = None  # cached password
+STATUS_REPORTER: Union[
+    "StatusReporter", None
+] = None  # StatusReporter instance for progress monitoring, optional
 
 log.debug(f"Max unencrypted filename length: {MAX_UNENCRYPTED_FILENAME_LENGTH}")
 log.debug(f"Max size of unecrypted input: {MAX_FILE_SIZE} bytes")
@@ -63,7 +65,7 @@ class DecryptionError(Exception):
 class FSFile:
     """File system file"""
 
-    def __init__(self, name: str, filesystem: Type[Filesystem]):
+    def __init__(self, name: str, filesystem: Filesystem):
         self.name = name
         self.filesystem = filesystem
         self.is_encrypted = is_encrypted(self.name)
@@ -76,7 +78,7 @@ class FSFile:
 class FSDirectory:
     """File system directory"""
 
-    def __init__(self, path: str, filesystem: Type[Filesystem]):
+    def __init__(self, path: str, filesystem: Filesystem):
         """
         path: path to the directory. If it contains only a name without a full path
               (no parent dir), current working directory will be the parent.
@@ -87,8 +89,8 @@ class FSDirectory:
         self.filesystem = filesystem
         if self.parent == "":
             self.parent = self.filesystem.getcwd()
-        self.files = []
-        self.directories = []
+        self.files: list["FSFile"] = []
+        self.directories: list["FSDirectory"] = []
         self.is_encrypted = is_encrypted(self.name)
         if self.is_encrypted:
             self.decrypted_name = decrypt_filename(self.name.encode("utf-8"))
@@ -114,7 +116,7 @@ class FSDirectory:
         # pylint: disable=no-value-for-parameter
         return os.path.join(*dec_parts)
 
-    def add_directory(self, directory: Self):
+    def add_directory(self, directory: "FSDirectory"):
         """adds a directory (FSDirectory) to the directory tree"""
         if not isinstance(directory, self.__class__):
             raise TypeError(
@@ -277,8 +279,8 @@ class FSDirectory:
 
     @classmethod
     def from_filesystem(
-        cls, path: str, filesystem: Type[Filesystem], recursive=True
-    ) -> Self:
+        cls, path: str, filesystem: Filesystem, recursive=True
+    ) -> "FSDirectory":
         """creates a FSdirectory tree from the file system"""
         if not filesystem.is_dir(path):
             raise IOError(f"Directory {path} does not exist or is not a directory")
@@ -303,7 +305,7 @@ class FSDirectory:
             directory.add_file(FSFile(name=fname, filesystem=filesystem))
         return directory
 
-    def one_way_diff(self, other: Self) -> Self | None:
+    def one_way_diff(self, other: "FSDirectory") -> Union["FSDirectory", None]:
         """
         compares two directory trees
         returns a new FSDirectory with entries that are not in self
@@ -351,7 +353,7 @@ class FSDirectory:
 
         return result
 
-    def __sub__(self, other: Self):
+    def __sub__(self, other: "FSDirectory"):
         """returns a new FSDirectory with entries that are not in self
         and are in the other, including their parent elements if nested deeper.
 
@@ -363,7 +365,7 @@ class FSDirectory:
             )
         return other.one_way_diff(self)
 
-    def __eq__(self, other: Self):
+    def __eq__(self, other):
         """compares two directory trees"""
         if not isinstance(other, self.__class__):
             raise TypeError(
@@ -423,7 +425,7 @@ class FileEncryptor:
         self,
         path: str,
         key: EncryptionKey,
-        filesystem: Type[Filesystem],
+        filesystem: Filesystem,
     ):
         self.key = key
         self.iv = os.urandom(IV_SIZE_BYTES)
@@ -483,7 +485,7 @@ class FileEncryptor:
             self._fd = None
 
     def encrypt_to_file(
-        self, destination: str, filesystem: Type[Filesystem], overwrite=False
+        self, destination: str, filesystem: Filesystem, overwrite=False
     ):
         """
         encrypts the underlying file and writes it to destination
@@ -516,7 +518,7 @@ class FileDecryptor:
     """
 
     # pylint: disable=invalid-name
-    def __init__(self, path: str, filesystem: Type[Filesystem]):
+    def __init__(self, path: str, filesystem: Filesystem):
         self.path = path
         self._fd = None
         self.finalized = False
@@ -582,7 +584,7 @@ class FileDecryptor:
     def decrypt_to_file(
         self,
         destination: str,
-        filesystem: Type[Filesystem],
+        filesystem: Filesystem,
         overwrite=False,
         keep_corrupted=False,
     ):
@@ -734,7 +736,7 @@ def encrypt_filename(key: EncryptionKey, plaintext: str) -> bytes:
     )
     if len(result) > MAX_FILENAME_LENGTH:
         raise RuntimeError(
-            f"Encrypted filename {result} is too long ({len(result)}). "
+            f"Encrypted filename {result!r} is too long ({len(result)}). "
             f"Max length is {MAX_FILENAME_LENGTH}. This is a bug. "
             f"MAX_UNENCRYPTED_FILENAME_LENGTH={MAX_UNENCRYPTED_FILENAME_LENGTH} "
             "needs to be lowered."
@@ -760,7 +762,7 @@ def decrypt_filename(encrypted_filename: bytes) -> str:
     except Exception as ex:
         # log.error(f"Failed to decode filename {encrypted_filename}: {ex}")
         raise ValueError(
-            f"Failed to decode filename {encrypted_filename}. "
+            f"Failed to decode filename {encrypted_filename!r}. "
             f"Probably invalid (non-encrypted) filename for decryption?: {ex}"
         ) from ex
 
@@ -768,7 +770,7 @@ def decrypt_filename(encrypted_filename: bytes) -> str:
         MAGIC_FILENAME_HEADER
     ):
         raise ValueError(
-            f"Invalid encrypted filename ({encrypted_filename}). "
+            f"Invalid encrypted filename ({encrypted_filename!r}). "
             "Too short to get all required metadata."
         )
     magic_header = decoded[  # pylint: disable=unused-variable
@@ -801,10 +803,10 @@ def decrypt_filename(encrypted_filename: bytes) -> str:
         return result
     except cryptography.exceptions.InvalidTag as ex:
         log.debug(
-            f"Failed to decrypt filename {encrypted_filename}: {ex}", exc_info=True
+            f"Failed to decrypt filename {encrypted_filename!r}: {ex}", exc_info=True
         )
         raise DecryptionError(
-            f"Failed to decrypt filename {encrypted_filename}, invalid password given?"
+            f"Failed to decrypt filename {encrypted_filename!r}, invalid password given?"
         ) from ex
     except:
         log.error("Unexpected error durin filename decryption:", exc_info=True)
@@ -927,9 +929,9 @@ def decrypt_directory(source: FSDirectory, destination: FSDirectory):
 
 def encrypt_file(
     source_file: str,
-    source_filesystem: type[Filesystem],
+    source_filesystem: Filesystem,
     target_directory: str,
-    target_filesystem: type[Filesystem],
+    target_filesystem: Filesystem,
     overwrite: bool = False,
 ) -> str:
     """
@@ -969,9 +971,9 @@ def encrypt_file(
 
 def decrypt_file(
     source_file: str,
-    source_filesystem: type[Filesystem],
+    source_filesystem: Filesystem,
     target_directory: str,
-    target_filesystem: type[Filesystem],
+    target_filesystem: Filesystem,
     overwrite: bool = False,
     keep_corrupted: bool = False,
 ):
@@ -1033,7 +1035,7 @@ def get_key(salt: bytes | None = None) -> EncryptionKey:
         if _KEYSTORE.get(salt):
             return _KEYSTORE[salt]
         else:
-            log.debug(f"Generating decryption key for salt {salt}")
+            log.debug(f"Generating decryption key for salt {salt!r}")
             key = EncryptionKey(password=get_password(), salt=salt)
             _KEYSTORE[salt] = key
             return key

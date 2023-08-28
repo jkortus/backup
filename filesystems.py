@@ -7,7 +7,7 @@ import logging
 import shutil
 from contextlib import contextmanager
 from abc import ABC, abstractmethod
-from typing import Generator, IO, AnyStr, Self
+from typing import BinaryIO, Iterator
 from io import BytesIO
 
 
@@ -54,14 +54,14 @@ class Filesystem(ABC):
         """
 
     @abstractmethod
-    def walk(self, path: str) -> Generator[str, list, list]:
+    def walk(self, path: str) -> Iterator[tuple[str, list, list]]:
         """
         Generator that returns only regular files and dirs and
         ignores symlinks and other special files
         """
 
     @abstractmethod
-    def open(self, filepath: str, mode: str = "r", encoding=None) -> IO[AnyStr]:
+    def open(self, filepath: str, mode: str = "r", encoding=None) -> BinaryIO:
         """opens a file and returns a file descriptor"""
 
     @abstractmethod
@@ -90,8 +90,8 @@ class VirtualDirectory:
 
     def __init__(self, name: str):
         self.name = name
-        self.dirs = []
-        self.files = []
+        self.dirs: list["VirtualDirectory"] = []
+        self.files: list["VirtualFile"] = []
 
     def add_dir(self, name: str):
         """adds a directory"""
@@ -108,7 +108,7 @@ class VirtualDirectory:
                 return
         raise IOError(f"Directory {name} does not exist")
 
-    def get_dir(self, name: str) -> Self:
+    def get_dir(self, name: str) -> "VirtualDirectory":
         """gets a directory"""
         for _dir in self.dirs:
             if _dir.name == name:
@@ -169,11 +169,11 @@ class VirtualFile:
         self.name = name
         self.content = b""
         self.is_open = False
-        self.open_handle = None
+        self.open_handle: VirtualFileHandle | None = None
 
     def open(
         self, mode: str = "r", encoding=None  # pylint: disable=unused-argument
-    ) -> IO[AnyStr]:
+    ) -> BinaryIO:
         """opens a file, binary only modes are supported ATM"""
         if "b" not in mode:
             raise NotImplementedError("Only binary mode is supported")
@@ -323,7 +323,7 @@ class VirtualFilesystem(Filesystem):
         yield
         self.cwd = old_cwd
 
-    def walk(self, path: str) -> Generator[str, list, list]:
+    def walk(self, path: str) -> Iterator[tuple[str, list, list]]:
         """returns the next directory content triplet as os.walk() would"""
         path = str(Path(path))  # avoid most shenanigans :)
         global_queue = [path]  # str paths
@@ -335,7 +335,7 @@ class VirtualFilesystem(Filesystem):
             yield (path, dirs, files)
             global_queue.extend([os.path.join(path, d) for d in dirs])
 
-    def open(self, filepath: str, mode: str = "r", encoding=None) -> IO[AnyStr]:
+    def open(self, filepath: str, mode: str = "r", encoding=None) -> BinaryIO:
         """opens a file and returns a file descriptor"""
         filepath = str(Path(filepath))  # avoid most shenanigans :)
         non_existent = False

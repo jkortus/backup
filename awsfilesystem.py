@@ -1,7 +1,7 @@
 """ AWS Filesystem module """
 import os
 from tempfile import mkstemp
-from typing import Generator, IO, AnyStr
+from typing import Iterator, BinaryIO
 from contextlib import contextmanager
 import logging
 from pathlib import Path
@@ -183,7 +183,7 @@ class AWSFilesystem(Filesystem):
         yield
         self.chdir(old_cwd)
 
-    def walk(self, path: str) -> Generator[str, list, list]:
+    def walk(self, path: str) -> Iterator[tuple[str, list, list]]:
         """
         Generator that returns only regular files and dirs and
         ignores symlinks and other special files
@@ -213,7 +213,7 @@ class AWSFilesystem(Filesystem):
             yield path, dirs, files
             queue.extend([os.path.join(path, d) for d in dirs])
 
-    def open(self, filepath: str, mode: str = "r", encoding=None) -> IO[AnyStr]:
+    def open(self, filepath: str, mode: str = "r", encoding=None) -> BinaryIO:
         """opens a file and returns a file descriptor"""
         if len(self.abs_path(filepath)) - 1 > AWS_MAX_OBJECT_NAME_LENGTH:
             raise OSError(
