@@ -10,7 +10,7 @@ from typing import Self, Type
 
 
 # pylint: disable=logging-fstring-interpolation
-# pylint: disable=
+# pylint: disable=too-many-lines
 import cryptography.exceptions
 
 # https://cryptography.io/en/latest/hazmat/primitives/symmetric-encryption/#cryptography.hazmat.primitives.ciphers.modes.GCM
@@ -258,7 +258,10 @@ class FSDirectory:
         return result
 
     def to_path_list(self) -> list[tuple[str, str]]:
-        """returns a list of tuples (decrypted_path, encrypted_path) for all files and directories in the tree"""
+        """
+        returns a list of tuples (decrypted_path, encrypted_path)
+        for all files and directories in the tree
+        """
         result = []
         for directory in self.directories:
             result.append((directory.abs_decrypted_path, directory.abs_path))

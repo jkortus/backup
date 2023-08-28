@@ -408,7 +408,7 @@ class FileNameEncryptionTest(unittest.TestCase):
         harmful_filename = "../../something-important"
         encrypted = base.encrypt_filename(base.get_key(), harmful_filename)
         with self.assertRaises(ValueError):
-            decrypted = base.decrypt_filename(encrypted)
+            base.decrypt_filename(encrypted)
 
 
 class DirectoryEncryptionTest(unittest.TestCase):
