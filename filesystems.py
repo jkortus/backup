@@ -330,8 +330,12 @@ class VirtualFilesystem(Filesystem):
         while len(global_queue) > 0:
             path = global_queue.pop(0)
             dir_obj = self.get_object(path)
-            dirs = [d.name for d in dir_obj.dirs]
-            files = [f.name for f in dir_obj.files]
+            if isinstance(dir_obj, self.dir_class):
+                dirs = [d.name for d in dir_obj.dirs]
+                files = [f.name for f in dir_obj.files]
+            else:
+                dirs = []
+                files = []
             yield (path, dirs, files)
             global_queue.extend([os.path.join(path, d) for d in dirs])
 

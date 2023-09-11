@@ -1434,6 +1434,7 @@ class VirtualFilesystemTest(unittest.TestCase):
         ]
         actual = list(walker)
         self.assertEqual(actual, expected)
+        self.assertEqual(list(vfs.walk("/a/b/file")), [("/a/b/file",[],[])])
 
     def test_relative_paths(self):
         """Tests basic operations with relative paths"""
