@@ -1418,6 +1418,10 @@ class VirtualFilesystemTest(unittest.TestCase):
         self.assertTrue(vfs.exists("/ef/gh"))
         with self.assertRaises(IOError):
             vfs.mkdir("")
+        with vfs.open("/not-a-directory", "wb") as fd:
+            fd.write(b"test")
+        with self.assertRaises(IOError):
+            vfs.rmdir("/not-a-directory")
 
     def test_vfs_walk(self):
         """Tests vfs.walk for results matching os.walk structure"""
@@ -1434,7 +1438,7 @@ class VirtualFilesystemTest(unittest.TestCase):
         ]
         actual = list(walker)
         self.assertEqual(actual, expected)
-        self.assertEqual(list(vfs.walk("/a/b/file")), [("/a/b/file",[],[])])
+        self.assertEqual(list(vfs.walk("/a/b/file")), [("/a/b/file", [], [])])
 
     def test_relative_paths(self):
         """Tests basic operations with relative paths"""

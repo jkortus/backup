@@ -46,7 +46,7 @@ class Filesystem(ABC):
 
     @abstractmethod
     @contextmanager
-    def cwd_cm(self, directory: str) -> None:
+    def cwd_cm(self, directory: str) -> Iterator[None]:
         """
         Context manager:
         changes to a directory that is over MAX_PATH_LENGTH
@@ -310,7 +310,7 @@ class VirtualFilesystem(Filesystem):
         return self.cwd
 
     @contextmanager
-    def cwd_cm(self, directory: str) -> None:
+    def cwd_cm(self, directory: str) -> Iterator[None]:
         """
         Context manager:
         changes to a directory that is over MAX_PATH_LENGTH
@@ -399,6 +399,8 @@ class VirtualFilesystem(Filesystem):
         if not parent:
             parent = self.cwd
         parent_dir = self._get_dir_object(parent)
+        # safety stop and mypy calmer, should be safe due to is_dir check above
+        assert isinstance(dir_obj, self.dir_class)
         if dir_obj.files or dir_obj.dirs:
             raise IOError(f"Directory {dirpath} is not empty")
         parent_dir.del_dir(name)
@@ -409,6 +411,8 @@ class VirtualFilesystem(Filesystem):
         if not self.is_dir(dirpath):
             raise IOError(f"Directory {dirpath} does not exist")
         dir_obj = self.get_object(dirpath)
+        # safety stop and mypy calmer, should be safe due to is_dir check above
+        assert isinstance(dir_obj, self.dir_class)
         for file in [_.name for _ in dir_obj.files]:
             self.unlink(os.path.join(dirpath, file))
         for subdir in [_.name for _ in dir_obj.dirs]:

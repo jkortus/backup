@@ -107,11 +107,11 @@ class AWSFilesystem(Filesystem):
         """
         if path == ".":
             return self.cwd
-        path = Path(path)
-        if path.is_absolute():
-            return str(path)
+        path_obj = Path(path)
+        if path_obj.is_absolute():
+            return str(path_obj)
         else:
-            return os.path.join(self.cwd, path)
+            return os.path.join(self.cwd, path_obj)
 
     def abs_s3_path(self, path: str) -> str:
         """
@@ -172,7 +172,7 @@ class AWSFilesystem(Filesystem):
         self.cwd = directory  # setter will make this absolute
 
     @contextmanager
-    def cwd_cm(self, directory: str) -> None:
+    def cwd_cm(self, directory: str) -> Iterator[None]:
         """
         Context manager:
         changes to a directory that is over MAX_PATH_LENGTH
