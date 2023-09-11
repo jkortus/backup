@@ -20,7 +20,9 @@ log.setLevel(logging.WARNING)
 # pylint: disable=logging-not-lazy
 
 
-def init_s3_from_string(s3_string, profile):
+def init_s3_from_string(
+    s3_string: str, profile: str
+) -> "awsfilesystem.AWSFilesystem":  # type: ignore[name-defined]
     """
     Parses s3://bucket/path string and returns AWSFilesystem instance
     usable as source or target filesystem
@@ -45,7 +47,7 @@ def init_s3_from_string(s3_string, profile):
     return awsfilesystem.AWSFilesystem(bucket, profile), "/" + "/".join(parts[3:])
 
 
-def _change_all_loggers_level(level):
+def _change_all_loggers_level(level: int) -> None:
     """Change all loggers level"""
     # pylint: disable=no-member
     loggers = [logging.getLogger(name) for name in logging.root.manager.loggerDict]
@@ -54,7 +56,7 @@ def _change_all_loggers_level(level):
         logger.setLevel(level)
 
 
-def _setup_logging(args):
+def _setup_logging(args: argparse.Namespace) -> None:
     """Setup logging"""
 
     if args.verbose:
@@ -73,7 +75,7 @@ def _setup_logging(args):
             logger.setLevel(logging.DEBUG)
 
 
-def main():
+def main() -> None:
     """Main function"""
     # parse cmdline args
     parser = argparse.ArgumentParser(

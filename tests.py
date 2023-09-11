@@ -24,6 +24,8 @@ log.setLevel(logging.WARNING)
 
 # pylint: disable=logging-fstring-interpolation
 # pylint: disable=too-many-lines
+# no typing checks for tests (yet?)
+# mypy: ignore-errors
 
 base.get_password = Mock(return_value="test")
 
