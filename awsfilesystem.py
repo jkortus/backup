@@ -1,5 +1,6 @@
 """ AWS Filesystem module """
 import os
+import io
 from tempfile import mkstemp
 from typing import Iterator, BinaryIO
 from contextlib import contextmanager
@@ -19,7 +20,7 @@ AWS_MAX_OBJECT_NAME_LENGTH = 1024  # all paths must be less than this length
 # pylint: disable=logging-fstring-interpolation
 
 
-class S3WriteProxy:
+class S3WriteProxy(io.BytesIO):
     """
     Proxy class for S3 writes.
     Caches all writes to a local file and only writes to S3 when the file is closed.
