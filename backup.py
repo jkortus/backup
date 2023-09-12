@@ -52,7 +52,7 @@ def _change_all_loggers_level(level: int) -> None:
     # pylint: disable=no-member
     loggers = [logging.getLogger(name) for name in logging.root.manager.loggerDict]
     for logger in loggers:
-        print(f"Setting {logger.name} to {level}")
+        log.debug(f"Setting {logger.name} to {level}")
         logger.setLevel(level)
 
 
