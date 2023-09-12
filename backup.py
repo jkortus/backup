@@ -107,7 +107,7 @@ def main() -> None:
     parser.add_argument(
         "--scrypt-n",
         type=int,
-        help="Key strenght modificator for scrypt. Don't change it if you don't "
+        help="Key strength modificator for scrypt. Don't change it if you don't "
         f"understand it and use default value ({base.SCRYPT_N}). It might be "
         f"useful to lower this value for testing ({2**14}) to sacrifice "
         "security for speed.",
