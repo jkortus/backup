@@ -47,6 +47,7 @@ class S3WriteProxy(io.BytesIO):
         if self.fd is None:
             _, self.local_file = mkstemp(prefix="s3writeproxy-", dir=self.temp_path)
             os.close(_)
+            # pylint: disable=consider-using-with
             self.fd = open(self.local_file, "wb")
 
     def close(self, abort: bool = False) -> None:
@@ -132,8 +133,7 @@ class AWSFilesystem(Filesystem):
         path_obj = Path(path)
         if path_obj.is_absolute():
             return str(path_obj)
-        else:
-            return os.path.join(self.cwd, path_obj)
+        return os.path.join(self.cwd, path_obj)
 
     def abs_s3_path(self, path: str) -> str:
         """
@@ -252,11 +252,10 @@ class AWSFilesystem(Filesystem):
             return self.s3fs.open(  # type: ignore[no-any-return]
                 self.abs_s3_path(filepath), mode=mode, encoding=encoding
             )
-        elif "w" in mode:
+        if "w" in mode:
             proxy = S3WriteProxy(self.s3fs, self.abs_s3_path(filepath))
             return proxy
-        else:
-            raise ValueError("Mode must contain r or w.")
+        raise ValueError("Mode must contain r or w.")
 
     def get_size(self, filepath: str) -> int:
         """returns the size of a file"""

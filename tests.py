@@ -24,6 +24,8 @@ log.setLevel(logging.WARNING)
 
 # pylint: disable=logging-fstring-interpolation
 # pylint: disable=too-many-lines
+# pylint: disable=too-many-locals
+# pylint: disable=too-many-statements
 # no typing checks for tests (yet?)
 # mypy: ignore-errors
 
