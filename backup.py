@@ -75,6 +75,8 @@ def _setup_logging(args: argparse.Namespace) -> None:
             logger.setLevel(logging.DEBUG)
 
 
+# pylint: disable=too-many-branches
+# pylint: disable=too-many-statements
 def main() -> None:
     """Main function"""
     # parse cmdline args

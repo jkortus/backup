@@ -69,7 +69,7 @@ class DecryptionError(Exception):
     """Raised when decryption fails"""
 
 
-class FSFile:
+class FSFile:  # pylint: disable=too-few-public-methods
     """File system file"""
 
     def __init__(self, name: str, filesystem: Filesystem):
@@ -396,7 +396,7 @@ class FSDirectory:
         return result
 
 
-class EncryptionKey:
+class EncryptionKey:  # pylint: disable=too-few-public-methods
     """Encryption key with all data needed to derive it back from password"""
 
     def __init__(self, password: str, salt: bytes | None = None):
@@ -521,6 +521,7 @@ class FileEncryptor:
 
 
 class FileDecryptor:
+    # pylint: disable=too-many-instance-attributes
     """
     Decrypts a file encrypted with FileEncryptor
     Needs to detect all crypto material before the
@@ -633,6 +634,7 @@ class FileDecryptor:
 
 
 class StatusReporter:
+    # pylint: disable=too-few-public-methods
     """
     Collects and reports events to inform the user
     about a long running process.
@@ -981,7 +983,7 @@ def encrypt_file(
     return target_filename
 
 
-def decrypt_file(
+def decrypt_file(  # pylint: disable=too-many-arguments
     source_file: str,
     source_filesystem: Filesystem,
     target_directory: str,
@@ -1018,10 +1020,9 @@ def get_password() -> str:
     global _PASSWORD  # pylint: disable=global-statement
     if _PASSWORD is not None:
         return _PASSWORD
-    else:
-        password = getpass.getpass(prompt="Password: ")
-        _PASSWORD = password
-        return password
+    password = getpass.getpass(prompt="Password: ")
+    _PASSWORD = password
+    return password
 
 
 def init_password(password: str | None) -> None:
@@ -1046,11 +1047,10 @@ def get_key(salt: bytes | None = None) -> EncryptionKey:
     if salt is not None:
         if _KEYSTORE.get(salt):
             return _KEYSTORE[salt]
-        else:
-            log.debug(f"Generating decryption key for salt {salt!r}")
-            key = EncryptionKey(password=get_password(), salt=salt)
-            _KEYSTORE[salt] = key
-            return key
+        log.debug(f"Generating decryption key for salt {salt!r}")
+        key = EncryptionKey(password=get_password(), salt=salt)
+        _KEYSTORE[salt] = key
+        return key
     if _ENCRYPTION_KEY is None:
         _ENCRYPTION_KEY = EncryptionKey(password=get_password())
     return _ENCRYPTION_KEY
@@ -1065,8 +1065,7 @@ def is_encrypted(filename: str) -> bool:
         b64_decoded = base64.urlsafe_b64decode(filename)
         if b64_decoded.startswith(MAGIC_FILENAME_HEADER):
             return True
-        else:
-            return False
+        return False
     except Exception:
         # log.debug(f"guessing is_encrypted({filename}) -> False")
         return False

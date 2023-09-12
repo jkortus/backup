@@ -183,13 +183,12 @@ class VirtualFile:
             raise NotImplementedError("Only binary mode is supported")
         if "r" in mode:
             return VirtualFileHandle(self)
-        elif "w" in mode:
+        if "w" in mode:
             self.content = b""
             return VirtualFileHandle(self)
-        elif "a" in mode:
+        if "a" in mode:
             return VirtualFileHandle(self)
-        else:
-            raise ValueError(f"Invalid mode {mode}")
+        raise ValueError(f"Invalid mode {mode}")
 
     def get_size(self) -> int:
         """returns the size of a file"""
