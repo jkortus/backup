@@ -7,7 +7,7 @@ import logging
 import shutil
 from contextlib import contextmanager
 from abc import ABC, abstractmethod
-from typing import Generator, IO, AnyStr, Self
+from typing import Iterator
 from io import BytesIO
 
 
@@ -46,7 +46,7 @@ class Filesystem(ABC):
 
     @abstractmethod
     @contextmanager
-    def cwd_cm(self, directory: str) -> None:
+    def cwd_cm(self, directory: str) -> Iterator[None]:
         """
         Context manager:
         changes to a directory that is over MAX_PATH_LENGTH
@@ -54,14 +54,16 @@ class Filesystem(ABC):
         """
 
     @abstractmethod
-    def walk(self, path: str) -> Generator[str, list, list]:
+    def walk(self, path: str) -> Iterator[tuple[str, list[str], list[str]]]:
         """
         Generator that returns only regular files and dirs and
         ignores symlinks and other special files
         """
 
     @abstractmethod
-    def open(self, filepath: str, mode: str = "r", encoding=None) -> IO[AnyStr]:
+    def open(
+        self, filepath: str, mode: str = "r", encoding: str | None = None
+    ) -> BytesIO:
         """opens a file and returns a file descriptor"""
 
     @abstractmethod
@@ -90,16 +92,16 @@ class VirtualDirectory:
 
     def __init__(self, name: str):
         self.name = name
-        self.dirs = []
-        self.files = []
+        self.dirs: list["VirtualDirectory"] = []
+        self.files: list["VirtualFile"] = []
 
-    def add_dir(self, name: str):
+    def add_dir(self, name: str) -> None:
         """adds a directory"""
         if name in [d.name for d in self.dirs] or name in [f.name for f in self.files]:
             raise IOError(f"Directory or file {name} already exists")
         self.dirs.append(self.__class__(name))
 
-    def del_dir(self, name: str):
+    def del_dir(self, name: str) -> None:
         """deletes a directory"""
 
         for _dir in self.dirs:
@@ -108,14 +110,14 @@ class VirtualDirectory:
                 return
         raise IOError(f"Directory {name} does not exist")
 
-    def get_dir(self, name: str) -> Self:
+    def get_dir(self, name: str) -> "VirtualDirectory":
         """gets a directory"""
         for _dir in self.dirs:
             if _dir.name == name:
                 return _dir
         raise IOError(f"Directory {name} does not exist")
 
-    def add_file(self, file: VirtualFile):
+    def add_file(self, file: VirtualFile) -> None:
         """adds a file"""
         if file.name in [f.name for f in self.files] or file.name in [
             d.name for d in self.dirs
@@ -130,7 +132,7 @@ class VirtualDirectory:
                 return file
         raise IOError(f"File {name} does not exist")
 
-    def del_file(self, name: str):
+    def del_file(self, name: str) -> None:
         """deletes a file"""
         for file in self.files:
             if file.name == name:
@@ -154,7 +156,7 @@ class VirtualFileHandle(BytesIO):
         self.file.open_handle = self
         super().__init__(self.file.content)
 
-    def close(self):
+    def close(self) -> None:
         """closes the file handle"""
         self.file.content = self.getvalue()
         self.file.is_open = False
@@ -169,23 +171,24 @@ class VirtualFile:
         self.name = name
         self.content = b""
         self.is_open = False
-        self.open_handle = None
+        self.open_handle: VirtualFileHandle | None = None
 
     def open(
-        self, mode: str = "r", encoding=None  # pylint: disable=unused-argument
-    ) -> IO[AnyStr]:
+        self,
+        mode: str = "r",
+        encoding: str | None = None,  # pylint: disable=unused-argument
+    ) -> BytesIO:
         """opens a file, binary only modes are supported ATM"""
         if "b" not in mode:
             raise NotImplementedError("Only binary mode is supported")
         if "r" in mode:
             return VirtualFileHandle(self)
-        elif "w" in mode:
+        if "w" in mode:
             self.content = b""
             return VirtualFileHandle(self)
-        elif "a" in mode:
+        if "a" in mode:
             return VirtualFileHandle(self)
-        else:
-            raise ValueError(f"Invalid mode {mode}")
+        raise ValueError(f"Invalid mode {mode}")
 
     def get_size(self) -> int:
         """returns the size of a file"""
@@ -197,7 +200,7 @@ class VirtualFile:
 class VirtualFilesystem(Filesystem):
     """Virtual in-memory filesystem"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._cwd = "/"  # keep this absolute
         self.root = VirtualDirectory("/")
         self.dir_class = VirtualDirectory
@@ -310,7 +313,7 @@ class VirtualFilesystem(Filesystem):
         return self.cwd
 
     @contextmanager
-    def cwd_cm(self, directory: str) -> None:
+    def cwd_cm(self, directory: str) -> Iterator[None]:
         """
         Context manager:
         changes to a directory that is over MAX_PATH_LENGTH
@@ -323,19 +326,25 @@ class VirtualFilesystem(Filesystem):
         yield
         self.cwd = old_cwd
 
-    def walk(self, path: str) -> Generator[str, list, list]:
+    def walk(self, path: str) -> Iterator[tuple[str, list[str], list[str]]]:
         """returns the next directory content triplet as os.walk() would"""
         path = str(Path(path))  # avoid most shenanigans :)
         global_queue = [path]  # str paths
         while len(global_queue) > 0:
             path = global_queue.pop(0)
             dir_obj = self.get_object(path)
-            dirs = [d.name for d in dir_obj.dirs]
-            files = [f.name for f in dir_obj.files]
+            if isinstance(dir_obj, self.dir_class):
+                dirs = [d.name for d in dir_obj.dirs]
+                files = [f.name for f in dir_obj.files]
+            else:
+                dirs = []
+                files = []
             yield (path, dirs, files)
             global_queue.extend([os.path.join(path, d) for d in dirs])
 
-    def open(self, filepath: str, mode: str = "r", encoding=None) -> IO[AnyStr]:
+    def open(
+        self, filepath: str, mode: str = "r", encoding: str | None = None
+    ) -> BytesIO:
         """opens a file and returns a file descriptor"""
         filepath = str(Path(filepath))  # avoid most shenanigans :)
         non_existent = False
@@ -395,6 +404,8 @@ class VirtualFilesystem(Filesystem):
         if not parent:
             parent = self.cwd
         parent_dir = self._get_dir_object(parent)
+        # safety stop and mypy calmer, should be safe due to is_dir check above
+        assert isinstance(dir_obj, self.dir_class)
         if dir_obj.files or dir_obj.dirs:
             raise IOError(f"Directory {dirpath} is not empty")
         parent_dir.del_dir(name)
@@ -405,6 +416,8 @@ class VirtualFilesystem(Filesystem):
         if not self.is_dir(dirpath):
             raise IOError(f"Directory {dirpath} does not exist")
         dir_obj = self.get_object(dirpath)
+        # safety stop and mypy calmer, should be safe due to is_dir check above
+        assert isinstance(dir_obj, self.dir_class)
         for file in [_.name for _ in dir_obj.files]:
             self.unlink(os.path.join(dirpath, file))
         for subdir in [_.name for _ in dir_obj.dirs]:
@@ -415,8 +428,9 @@ class VirtualFilesystem(Filesystem):
 class RealFilesystem(Filesystem):
     """Class representing a real on-disk filesystem"""
 
-    def is_dir(self, path: str):
+    def is_dir(self, path: str) -> bool:
         """returns True if path is a directory"""
+        path = str(Path(path))  # avoid most shenanigans :)
         parent = os.path.dirname(path)
         name = os.path.basename(path)
         if not parent:
@@ -424,8 +438,9 @@ class RealFilesystem(Filesystem):
         with self.cwd_cm(parent):
             return os.path.isdir(name)
 
-    def mkdir(self, dirpath: str):
+    def mkdir(self, dirpath: str) -> None:
         """creates diretories"""
+        dirpath = str(Path(dirpath))  # avoid most shenanigans :)
         name = os.path.basename(dirpath)
         parent = os.path.dirname(dirpath)
         if parent:
@@ -434,7 +449,7 @@ class RealFilesystem(Filesystem):
         else:
             os.mkdir(dirpath)
 
-    def makedirs(self, dirpath: str, exist_ok: bool = False):
+    def makedirs(self, dirpath: str, exist_ok: bool = False) -> None:
         """creates diretories"""
         path = pathlib.Path(dirpath)
         root = str(path.parent)
@@ -451,12 +466,13 @@ class RealFilesystem(Filesystem):
             else:
                 os.makedirs(dirpath, exist_ok=exist_ok)
 
-    def getcwd(self):
+    def getcwd(self) -> str:
         """returns the current working directory"""
         return os.getcwd()
 
-    def chdir(self, directory: str):
+    def chdir(self, directory: str) -> None:
         """changes the current working directory"""
+        directory = str(Path(directory))  # avoid most shenanigans :)
         if len(directory) > MAX_PATH_LENGTH:
             segments = self.get_safe_path_segments(directory)
             for segment in segments:
@@ -470,7 +486,7 @@ class RealFilesystem(Filesystem):
             os.chdir(directory)
 
     @contextmanager
-    def cwd_cm(self, directory: str):
+    def cwd_cm(self, directory: str) -> Iterator[None]:
         """
         Context manager:
         changes to a directory that is over MAX_PATH_LENGTH
@@ -481,6 +497,7 @@ class RealFilesystem(Filesystem):
             # if directory is empty as a result of path parsing, do nothing
             yield
             return
+        directory = str(Path(directory))  # avoid most shenanigans :)
         try:
             old_cwd = self.getcwd()
         except FileNotFoundError:
@@ -497,11 +514,12 @@ class RealFilesystem(Filesystem):
                 log.warning("Previous working directory got deleted, returning to /!")
                 self.chdir("/")
 
-    def walk(self, path: str):
+    def walk(self, path: str) -> Iterator[tuple[str, list[str], list[str]]]:
         """
         Generator that returns only regular files and dirs and
         ignores symlinks and other special files
         """
+        path = str(Path(path))  # avoid most shenanigans :)
         if not self.is_dir(path):
             raise IOError(f"Directory {path} does not exist or is not a directory")
 
@@ -530,45 +548,53 @@ class RealFilesystem(Filesystem):
             yield (path, dirs, files)
             global_queue.extend([os.path.join(path, d) for d in dirs])
 
-    def open(self, filepath: str, mode: str = "r", encoding=None):
+    def open(
+        self, filepath: str, mode: str = "r", encoding: str | None = None
+    ) -> BytesIO:
         """opens a file and returns a file descriptor"""
+        filepath = str(Path(filepath))  # avoid most shenanigans :)
         directory = os.path.dirname(filepath)
         fname = os.path.basename(filepath)
         with self.cwd_cm(directory):
-            return open(fname, mode, encoding=encoding)
+            return open(fname, mode, encoding=encoding)  # type: ignore[return-value]
 
-    def get_size(self, filepath: str):
+    def get_size(self, filepath: str) -> int:
         """returns the size of a file"""
+        filepath = str(Path(filepath))  # avoid most shenanigans :)
         fname = os.path.basename(filepath)
         with self.cwd_cm(os.path.dirname(filepath)):
             return os.path.getsize(fname)
 
-    def exists(self, filepath: str):
+    def exists(self, filepath: str) -> bool:
         """returns True if filepath exists"""
+        filepath = str(Path(filepath))  # avoid most shenanigans :)
         parent = os.path.dirname(filepath)
         if not parent:
             parent = self.getcwd()
         with self.cwd_cm(parent):
             return os.path.exists(os.path.basename(filepath))
 
-    def unlink(self, filepath: str):
+    def unlink(self, filepath: str) -> None:
         """removes a file"""
+        filepath = str(Path(filepath))  # avoid most shenanigans :)
         parent = os.path.dirname(filepath)
         if not parent:
             parent = self.getcwd()
         with self.cwd_cm(parent):
             return os.unlink(os.path.basename(filepath))
 
-    def rmdir(self, dirpath: str):
+    def rmdir(self, dirpath: str) -> None:
         """removes a directory"""
+        dirpath = str(Path(dirpath))  # avoid most shenanigans :)
         parent = os.path.dirname(dirpath)
         if not parent:
             parent = self.getcwd()
         with self.cwd_cm(parent):
             return os.rmdir(os.path.basename(dirpath))
 
-    def rmtree(self, dirpath: str):
+    def rmtree(self, dirpath: str) -> None:
         """removes a directory tree recursively"""
+        dirpath = str(Path(dirpath))  # avoid most shenanigans :)
         parent = os.path.dirname(dirpath)
         if not parent:
             parent = self.getcwd()

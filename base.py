@@ -4,20 +4,27 @@ import copy
 import getpass
 import logging
 import os
+from io import BytesIO, IOBase
 import pathlib
 from copy import deepcopy
-from typing import Self, Type
+from typing import Dict, Union, Any
 
 
 # pylint: disable=logging-fstring-interpolation
-# pylint: disable=
+# pylint: disable=too-many-lines
 import cryptography.exceptions
 
 # https://cryptography.io/en/latest/hazmat/primitives/symmetric-encryption/#cryptography.hazmat.primitives.ciphers.modes.GCM
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.ciphers import (
+    Cipher,
+    algorithms,
+    modes,
+    AEADDecryptionContext,
+)
 
 # https://cryptography.io/en/latest/hazmat/primitives/key-derivation-functions/#scrypt
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+
 
 import filesystems
 from filesystems import MAX_FILENAME_LENGTH, MAX_PATH_LENGTH, Filesystem
@@ -47,10 +54,12 @@ MAX_UNENCRYPTED_FILENAME_LENGTH = (
     - SALT_SIZE_BYTES
     - len(MAGIC_FILENAME_HEADER)
 )
-_KEYSTORE = {}  # cached keys for detected salts
-_ENCRYPTION_KEY = None  # cached encryption key
-_PASSWORD = None  # cached password
-STATUS_REPORTER = None  # StatusReporter instance for progress monitoring, optional
+_KEYSTORE: Dict[bytes, "EncryptionKey"] = {}  # cached keys for detected salts
+_ENCRYPTION_KEY: Union["EncryptionKey", None] = None  # cached encryption key
+_PASSWORD: str | None = None  # cached password
+STATUS_REPORTER: Union[
+    "StatusReporter", None
+] = None  # StatusReporter instance for progress monitoring, optional
 
 log.debug(f"Max unencrypted filename length: {MAX_UNENCRYPTED_FILENAME_LENGTH}")
 log.debug(f"Max size of unecrypted input: {MAX_FILE_SIZE} bytes")
@@ -60,10 +69,10 @@ class DecryptionError(Exception):
     """Raised when decryption fails"""
 
 
-class FSFile:
+class FSFile:  # pylint: disable=too-few-public-methods
     """File system file"""
 
-    def __init__(self, name: str, filesystem: Type[Filesystem]):
+    def __init__(self, name: str, filesystem: Filesystem):
         self.name = name
         self.filesystem = filesystem
         self.is_encrypted = is_encrypted(self.name)
@@ -76,7 +85,7 @@ class FSFile:
 class FSDirectory:
     """File system directory"""
 
-    def __init__(self, path: str, filesystem: Type[Filesystem]):
+    def __init__(self, path: str, filesystem: Filesystem):
         """
         path: path to the directory. If it contains only a name without a full path
               (no parent dir), current working directory will be the parent.
@@ -87,8 +96,8 @@ class FSDirectory:
         self.filesystem = filesystem
         if self.parent == "":
             self.parent = self.filesystem.getcwd()
-        self.files = []
-        self.directories = []
+        self.files: list["FSFile"] = []
+        self.directories: list["FSDirectory"] = []
         self.is_encrypted = is_encrypted(self.name)
         if self.is_encrypted:
             self.decrypted_name = decrypt_filename(self.name.encode("utf-8"))
@@ -96,12 +105,12 @@ class FSDirectory:
             self.decrypted_name = self.name
 
     @property
-    def abs_path(self):
+    def abs_path(self) -> str:
         """returns absolute path to the directory within its filesystem"""
         return os.path.join(self.parent, self.name)
 
     @property
-    def abs_decrypted_path(self):
+    def abs_decrypted_path(self) -> str:
         """returns absolute decrypted path to the directory"""
         path_parts = pathlib.Path(self.abs_path).parts
         dec_parts = []
@@ -114,7 +123,7 @@ class FSDirectory:
         # pylint: disable=no-value-for-parameter
         return os.path.join(*dec_parts)
 
-    def add_directory(self, directory: Self):
+    def add_directory(self, directory: "FSDirectory") -> None:
         """adds a directory (FSDirectory) to the directory tree"""
         if not isinstance(directory, self.__class__):
             raise TypeError(
@@ -141,7 +150,7 @@ class FSDirectory:
         directory.parent = os.path.join(self.parent, self.name)
         self.directories.append(directory)
 
-    def add_file(self, file: FSFile):
+    def add_file(self, file: FSFile) -> None:
         """adds a file (FSFile) to the directory tree"""
         if not isinstance(file, FSFile):
             raise TypeError(
@@ -156,7 +165,7 @@ class FSDirectory:
             )
         self.files.append(file)
 
-    def get_directory(self, name: str):
+    def get_directory(self, name: str) -> "FSDirectory":
         """
         returns a directory object (FSDirectory) by name
         raises KeyError if not found
@@ -170,7 +179,7 @@ class FSDirectory:
                 return directory
         raise KeyError(f"Directory {name} not found")
 
-    def is_empty(self):
+    def is_empty(self) -> bool:
         """returns True if the directory is empty (has no subdirs and no files)"""
         return len(self.files) == 0 and len(self.directories) == 0
 
@@ -210,15 +219,18 @@ class FSDirectory:
         """returns a list of FSFile objects for all directly nested files"""
         return copy.deepcopy(self.files)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"FSDirectory(name={self.name}, parent={self.parent}, encrypted={self.is_encrypted})"
 
-    def pretty_print(self, indent: int = 2):
+    def pretty_print(self, indent: int = 2) -> None:
         """prints the directory structure"""
         print(self.dump(indent=indent))
 
     def dump(
-        self, indent: int = 2, show_encrypted_fnames=False, show_filesystem=False
+        self,
+        indent: int = 2,
+        show_encrypted_fnames: bool = False,
+        show_filesystem: bool = False,
     ) -> str:
         """returns a string representation of the directory structure"""
         result = ""
@@ -258,7 +270,10 @@ class FSDirectory:
         return result
 
     def to_path_list(self) -> list[tuple[str, str]]:
-        """returns a list of tuples (decrypted_path, encrypted_path) for all files and directories in the tree"""
+        """
+        returns a list of tuples (decrypted_path, encrypted_path)
+        for all files and directories in the tree
+        """
         result = []
         for directory in self.directories:
             result.append((directory.abs_decrypted_path, directory.abs_path))
@@ -274,8 +289,8 @@ class FSDirectory:
 
     @classmethod
     def from_filesystem(
-        cls, path: str, filesystem: Type[Filesystem], recursive=True
-    ) -> Self:
+        cls, path: str, filesystem: Filesystem, recursive: bool = True
+    ) -> "FSDirectory":
         """creates a FSdirectory tree from the file system"""
         if not filesystem.is_dir(path):
             raise IOError(f"Directory {path} does not exist or is not a directory")
@@ -300,7 +315,7 @@ class FSDirectory:
             directory.add_file(FSFile(name=fname, filesystem=filesystem))
         return directory
 
-    def one_way_diff(self, other: Self) -> Self | None:
+    def one_way_diff(self, other: "FSDirectory") -> Union["FSDirectory", None]:
         """
         compares two directory trees
         returns a new FSDirectory with entries that are not in self
@@ -348,7 +363,7 @@ class FSDirectory:
 
         return result
 
-    def __sub__(self, other: Self):
+    def __sub__(self, other: "FSDirectory") -> "FSDirectory|None":
         """returns a new FSDirectory with entries that are not in self
         and are in the other, including their parent elements if nested deeper.
 
@@ -360,7 +375,7 @@ class FSDirectory:
             )
         return other.one_way_diff(self)
 
-    def __eq__(self, other: Self):
+    def __eq__(self, other: Any) -> bool:
         """compares two directory trees"""
         if not isinstance(other, self.__class__):
             raise TypeError(
@@ -368,7 +383,7 @@ class FSDirectory:
             )
         return self.one_way_diff(other) is None and other.one_way_diff(self) is None
 
-    def __deepcopy__(self, memo):
+    def __deepcopy__(self, memo: dict) -> "FSDirectory":  # type: ignore[type-arg]
         """creates deep copy that will share filesystem reference with original"""
         cls = self.__class__
         result = cls.__new__(cls)
@@ -381,7 +396,7 @@ class FSDirectory:
         return result
 
 
-class EncryptionKey:
+class EncryptionKey:  # pylint: disable=too-few-public-methods
     """Encryption key with all data needed to derive it back from password"""
 
     def __init__(self, password: str, salt: bytes | None = None):
@@ -420,7 +435,7 @@ class FileEncryptor:
         self,
         path: str,
         key: EncryptionKey,
-        filesystem: Type[Filesystem],
+        filesystem: Filesystem,
     ):
         self.key = key
         self.iv = os.urandom(IV_SIZE_BYTES)
@@ -430,10 +445,10 @@ class FileEncryptor:
         ).encryptor()
         self.path = path
         self.filesystem = filesystem
-        self._fd = None  # holding fd to a file when opened
+        self._fd: BytesIO | None = None  # holding fd to a file when opened
         self.finalized = False
 
-    def read(self, size=None):
+    def read(self, size: int | None = None) -> bytes:
         """reads and encrypts the file content, returns encrypted data"""
         if self.finalized:
             return b""
@@ -473,15 +488,15 @@ class FileEncryptor:
             self.finalized = True
         return encrypted_data
 
-    def close(self):
+    def close(self) -> None:
         """closes the underlying file if open"""
         if self._fd:
             self._fd.close()
             self._fd = None
 
     def encrypt_to_file(
-        self, destination: str, filesystem: Type[Filesystem], overwrite=False
-    ):
+        self, destination: str, filesystem: Filesystem, overwrite: bool = False
+    ) -> None:
         """
         encrypts the underlying file and writes it to destination
         using incremental reads
@@ -506,6 +521,7 @@ class FileEncryptor:
 
 
 class FileDecryptor:
+    # pylint: disable=too-many-instance-attributes
     """
     Decrypts a file encrypted with FileEncryptor
     Needs to detect all crypto material before the
@@ -513,11 +529,11 @@ class FileDecryptor:
     """
 
     # pylint: disable=invalid-name
-    def __init__(self, path: str, filesystem: Type[Filesystem]):
+    def __init__(self, path: str, filesystem: Filesystem):
         self.path = path
-        self._fd = None
+        self._fd: IOBase | None = None
         self.finalized = False
-        self.decryptor = None
+        self.decryptor: AEADDecryptionContext | None = None
         self.filesystem = filesystem
         size = self.filesystem.get_size(path)
         self.max_read_pos = size - IV_SIZE_BYTES - TAG_SIZE_BYTES - SALT_SIZE_BYTES
@@ -528,7 +544,7 @@ class FileDecryptor:
             )
         self._init_crypto()
 
-    def _init_crypto(self):
+    def _init_crypto(self) -> None:
         """Inits crypto material based on the content of the file and caches the key"""
         self._fd = self.filesystem.open(self.path, "rb")
         self._fd.seek(-SALT_SIZE_BYTES - IV_SIZE_BYTES - TAG_SIZE_BYTES, os.SEEK_END)
@@ -544,7 +560,7 @@ class FileDecryptor:
         ).decryptor()
         self.crypto_init_done = True
 
-    def read(self, size=None):
+    def read(self, size: int | None = None) -> bytes:
         """
         reads an encrypted underlying file and
         decrypts the file content, returns decrypted data
@@ -553,6 +569,8 @@ class FileDecryptor:
             self._init_crypto()
         if self.finalized:
             return b""
+        assert self._fd is not None
+        assert self.decryptor is not None
         args = []
         if size is None:
             args.append(self.max_read_pos)  # read the whole file except the iv+tag
@@ -579,10 +597,10 @@ class FileDecryptor:
     def decrypt_to_file(
         self,
         destination: str,
-        filesystem: Type[Filesystem],
-        overwrite=False,
-        keep_corrupted=False,
-    ):
+        filesystem: Filesystem,
+        overwrite: bool = False,
+        keep_corrupted: bool = False,
+    ) -> None:
         """
         decrypts the underlying file and writes it to destination
         using incremental reads
@@ -608,7 +626,7 @@ class FileDecryptor:
                 filesystem.unlink(destination)
             raise
 
-    def close(self):
+    def close(self) -> None:
         """closes the underlying file if open"""
         if self._fd:
             self._fd.close()
@@ -616,17 +634,18 @@ class FileDecryptor:
 
 
 class StatusReporter:
+    # pylint: disable=too-few-public-methods
     """
     Collects and reports events to inform the user
     about a long running process.
     """
 
-    def __init__(self, terminal_width=80):
+    def __init__(self, terminal_width: int = 80):
         self.files_processed = 0
         self.files_skipped = 0
         self.terminal_width = terminal_width
 
-    def event(self, name, *args):
+    def event(self, name: str, *args: Any) -> None:
         """reports an event"""
         if name == "encrypt_file":
             # if self.files_processed == 0:
@@ -682,7 +701,7 @@ class StatusReporter:
             log.debug(f"Unknown event ignored: {name} {args}")
 
 
-def _encrypt(key: EncryptionKey, plaintext: bytes):
+def _encrypt(key: EncryptionKey, plaintext: bytes) -> tuple[bytes, bytes, bytes]:
     """Encrypts plaintext byte data with the given key and returns a tuple of iv, ciphertext, tag"""
     # pylint: disable=invalid-name
     # Generate a random 96-bit IV.
@@ -702,7 +721,7 @@ def _encrypt(key: EncryptionKey, plaintext: bytes):
     return (iv, ciphertext, encryptor.tag)
 
 
-def _decrypt(key: EncryptionKey, iv: bytes, ciphertext: bytes, tag: bytes):
+def _decrypt(key: EncryptionKey, iv: bytes, ciphertext: bytes, tag: bytes) -> bytes:
     """Decrypts ciphertext byte data with the given key and returns the plaintext"""
     # Construct a Cipher object, with the key, iv, and additionally the
     # GCM tag used for authenticating the message.
@@ -731,7 +750,7 @@ def encrypt_filename(key: EncryptionKey, plaintext: str) -> bytes:
     )
     if len(result) > MAX_FILENAME_LENGTH:
         raise RuntimeError(
-            f"Encrypted filename {result} is too long ({len(result)}). "
+            f"Encrypted filename {result!r} is too long ({len(result)}). "
             f"Max length is {MAX_FILENAME_LENGTH}. This is a bug. "
             f"MAX_UNENCRYPTED_FILENAME_LENGTH={MAX_UNENCRYPTED_FILENAME_LENGTH} "
             "needs to be lowered."
@@ -757,7 +776,7 @@ def decrypt_filename(encrypted_filename: bytes) -> str:
     except Exception as ex:
         # log.error(f"Failed to decode filename {encrypted_filename}: {ex}")
         raise ValueError(
-            f"Failed to decode filename {encrypted_filename}. "
+            f"Failed to decode filename {encrypted_filename!r}. "
             f"Probably invalid (non-encrypted) filename for decryption?: {ex}"
         ) from ex
 
@@ -765,7 +784,7 @@ def decrypt_filename(encrypted_filename: bytes) -> str:
         MAGIC_FILENAME_HEADER
     ):
         raise ValueError(
-            f"Invalid encrypted filename ({encrypted_filename}). "
+            f"Invalid encrypted filename ({encrypted_filename!r}). "
             "Too short to get all required metadata."
         )
     magic_header = decoded[  # pylint: disable=unused-variable
@@ -798,17 +817,17 @@ def decrypt_filename(encrypted_filename: bytes) -> str:
         return result
     except cryptography.exceptions.InvalidTag as ex:
         log.debug(
-            f"Failed to decrypt filename {encrypted_filename}: {ex}", exc_info=True
+            f"Failed to decrypt filename {encrypted_filename!r}: {ex}", exc_info=True
         )
         raise DecryptionError(
-            f"Failed to decrypt filename {encrypted_filename}, invalid password given?"
+            f"Failed to decrypt filename {encrypted_filename!r}, invalid password given?"
         ) from ex
     except:
         log.error("Unexpected error durin filename decryption:", exc_info=True)
         raise
 
 
-def encrypt_directory(source: FSDirectory, destination: FSDirectory):
+def encrypt_directory(source: FSDirectory, destination: FSDirectory) -> None:
     """encrypts all files and directories in directory and writes them to destination"""
     log.debug(f"encrypt_directory({source} -> {destination})")
     if not (isinstance(source, FSDirectory) and isinstance(destination, FSDirectory)):
@@ -868,7 +887,7 @@ def encrypt_directory(source: FSDirectory, destination: FSDirectory):
         encrypt_directory(source.get_directory(directory), next_target)
 
 
-def decrypt_directory(source: FSDirectory, destination: FSDirectory):
+def decrypt_directory(source: FSDirectory, destination: FSDirectory) -> None:
     """decrypts all files and directories in directory and writes them to destination"""
     log.debug(f"decrypt_directory({source} -> {destination})")
     destination.filesystem.makedirs(destination.abs_path, exist_ok=True)
@@ -924,9 +943,9 @@ def decrypt_directory(source: FSDirectory, destination: FSDirectory):
 
 def encrypt_file(
     source_file: str,
-    source_filesystem: type[Filesystem],
+    source_filesystem: Filesystem,
     target_directory: str,
-    target_filesystem: type[Filesystem],
+    target_filesystem: Filesystem,
     overwrite: bool = False,
 ) -> str:
     """
@@ -964,14 +983,14 @@ def encrypt_file(
     return target_filename
 
 
-def decrypt_file(
+def decrypt_file(  # pylint: disable=too-many-arguments
     source_file: str,
-    source_filesystem: type[Filesystem],
+    source_filesystem: Filesystem,
     target_directory: str,
-    target_filesystem: type[Filesystem],
+    target_filesystem: Filesystem,
     overwrite: bool = False,
     keep_corrupted: bool = False,
-):
+) -> None:
     """Decrypts single file to a target directory"""
     log.debug(f"decrypt_file({source_file} -> {target_directory})")
     if not source_filesystem.exists(source_file) or source_filesystem.is_dir(
@@ -996,18 +1015,17 @@ def decrypt_file(
     report_event("decrypt_file", source_file, decrypted_fname)
 
 
-def get_password():
+def get_password() -> str:
     """asks for password interactively"""
     global _PASSWORD  # pylint: disable=global-statement
     if _PASSWORD is not None:
         return _PASSWORD
-    else:
-        password = getpass.getpass(prompt="Password: ")
-        _PASSWORD = password
-        return password
+    password = getpass.getpass(prompt="Password: ")
+    _PASSWORD = password
+    return password
 
 
-def init_password(password: str | None):
+def init_password(password: str | None) -> None:
     """
     helper function for command line utilities
     If password is given it is used, otherwise it's asked for interactively
@@ -1029,17 +1047,16 @@ def get_key(salt: bytes | None = None) -> EncryptionKey:
     if salt is not None:
         if _KEYSTORE.get(salt):
             return _KEYSTORE[salt]
-        else:
-            log.debug(f"Generating decryption key for salt {salt}")
-            key = EncryptionKey(password=get_password(), salt=salt)
-            _KEYSTORE[salt] = key
-            return key
+        log.debug(f"Generating decryption key for salt {salt!r}")
+        key = EncryptionKey(password=get_password(), salt=salt)
+        _KEYSTORE[salt] = key
+        return key
     if _ENCRYPTION_KEY is None:
         _ENCRYPTION_KEY = EncryptionKey(password=get_password())
     return _ENCRYPTION_KEY
 
 
-def is_encrypted(filename: str):
+def is_encrypted(filename: str) -> bool:
     """guess if the filename is an encrypted string"""
     # pylint: disable=broad-except
     try:
@@ -1048,14 +1065,13 @@ def is_encrypted(filename: str):
         b64_decoded = base64.urlsafe_b64decode(filename)
         if b64_decoded.startswith(MAGIC_FILENAME_HEADER):
             return True
-        else:
-            return False
+        return False
     except Exception:
         # log.debug(f"guessing is_encrypted({filename}) -> False")
         return False
 
 
-def report_event(event: str, *args, **kwargs):
+def report_event(event: str, *args: Any, **kwargs: Any) -> None:
     """
     reports events as they are happening from inside various
     functions for the purpose of progress monitoring

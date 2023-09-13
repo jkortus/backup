@@ -8,6 +8,8 @@ import string
 import tempfile
 import pathlib
 import unittest
+import subprocess
+import glob
 from copy import deepcopy
 from unittest.mock import Mock, patch
 
@@ -24,6 +26,10 @@ log.setLevel(logging.WARNING)
 
 # pylint: disable=logging-fstring-interpolation
 # pylint: disable=too-many-lines
+# pylint: disable=too-many-locals
+# pylint: disable=too-many-statements
+# no typing checks for tests (yet?)
+# mypy: ignore-errors
 
 base.get_password = Mock(return_value="test")
 
@@ -408,7 +414,7 @@ class FileNameEncryptionTest(unittest.TestCase):
         harmful_filename = "../../something-important"
         encrypted = base.encrypt_filename(base.get_key(), harmful_filename)
         with self.assertRaises(ValueError):
-            decrypted = base.decrypt_filename(encrypted)
+            base.decrypt_filename(encrypted)
 
 
 class DirectoryEncryptionTest(unittest.TestCase):
@@ -1418,6 +1424,10 @@ class VirtualFilesystemTest(unittest.TestCase):
         self.assertTrue(vfs.exists("/ef/gh"))
         with self.assertRaises(IOError):
             vfs.mkdir("")
+        with vfs.open("/not-a-directory", "wb") as fd:
+            fd.write(b"test")
+        with self.assertRaises(IOError):
+            vfs.rmdir("/not-a-directory")
 
     def test_vfs_walk(self):
         """Tests vfs.walk for results matching os.walk structure"""
@@ -1434,6 +1444,7 @@ class VirtualFilesystemTest(unittest.TestCase):
         ]
         actual = list(walker)
         self.assertEqual(actual, expected)
+        self.assertEqual(list(vfs.walk("/a/b/file")), [("/a/b/file", [], [])])
 
     def test_relative_paths(self):
         """Tests basic operations with relative paths"""
@@ -1617,6 +1628,340 @@ class S3FileSystemTest(unittest.TestCase):
             # with the dir name at the limit anything opened inside
             # must cause an error
             vfs.open(os.path.join(self.testdir, max_dir_str, "file1"), "wb")
+
+
+class TestCommandLineUtility(unittest.TestCase):
+    """Test command line utility"""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.root = tempfile.mkdtemp(prefix="backup-test-")
+        self.source_dir = os.path.join(self.root, "source")
+        self.encrypted_dir = os.path.join(self.root, "encrypted")
+        self.decrypted_dir = os.path.join(self.root, "decrypted")
+        self.command = os.path.join(os.path.dirname(__file__), "backup.py")
+        self.base_params = [
+            "--scrypt-n",
+            "16384",
+            "--password",
+            "x",
+        ]
+
+    def setUp(self):
+        os.mkdir(self.source_dir)
+        os.mkdir(self.encrypted_dir)
+        os.mkdir(self.decrypted_dir)
+        self.tree_init()
+
+    def tearDown(self):
+        shutil.rmtree(self.root)
+
+    def tree_init(self):
+        """Initialize test tree"""
+        tree = {
+            "dir1": {"dir-1-1": {}, "dir-1-2": {"file-1-2": "test"}, "file1": "test"},
+            "dir2": {"file2": "test2"},
+            "file3": "test3",
+        }
+        create_fs_tree_from_dict(self.source_dir, tree)
+
+    def exec(
+        self, args_list, input=None, timeout=60
+    ):  # pylint: disable=redefined-builtin
+        """Execute command line utility"""
+        return subprocess.run(
+            [self.command] + args_list,
+            check=False,
+            capture_output=True,
+            timeout=timeout,
+            input=input,
+        )
+
+    def dirs_equal(self, first, second):
+        """Compares two directories that are expected to be equal."""
+        files_first = sorted(
+            [_.replace(first, "") for _ in glob.glob(first + "/**", recursive=True)]
+        )
+        second_files = sorted(
+            [_.replace(second, "") for _ in glob.glob(second + "/**", recursive=True)]
+        )
+        return files_first == second_files
+
+    def test_encryption_decryption(self):
+        """test basic encryption and decryption worklfow"""
+
+        # encrypt first
+        result = self.exec(
+            self.base_params
+            + [
+                "--encrypt",
+                self.source_dir,
+                self.encrypted_dir,
+            ],
+        )
+        log.debug(result.stdout)
+        log.debug(result.stderr)
+        self.assertEqual(result.returncode, 0)
+
+        # decrypt
+        result = self.exec(
+            self.base_params
+            + [
+                "--decrypt",
+                self.encrypted_dir,
+                self.decrypted_dir,
+            ],
+        )
+        log.debug(result.stdout)
+        log.debug(result.stderr)
+        self.assertEqual(result.returncode, 0)
+        # make sure files are the same after decryption (names + structure only)
+        self.assertTrue(self.dirs_equal(self.source_dir, self.decrypted_dir))
+
+    def test_new_file(self):
+        """test new file creation"""
+        result = self.exec(
+            self.base_params
+            + [
+                "--encrypt",
+                self.source_dir,
+                self.encrypted_dir,
+            ],
+        )
+        log.debug(result.stdout)
+        log.debug(result.stderr)
+        self.assertEqual(result.returncode, 0)
+        # create a new file in source dir
+        with open(os.path.join(self.source_dir, "newfile"), "wb") as tfd:
+            tfd.write(b"test")
+        # encrypt again
+        result = self.exec(
+            self.base_params
+            + [
+                "--encrypt",
+                self.source_dir,
+                self.encrypted_dir,
+            ],
+        )
+        log.debug(result.stdout)
+        log.debug(result.stderr)
+        self.assertEqual(result.returncode, 0)
+        # decrypt
+        result = self.exec(
+            self.base_params
+            + [
+                "--decrypt",
+                self.encrypted_dir,
+                self.decrypted_dir,
+            ],
+        )
+        log.debug(result.stdout)
+        log.debug(result.stderr)
+        self.assertEqual(result.returncode, 0)
+        # make sure files are the same after decryption (names + structure only)
+        self.assertTrue(self.dirs_equal(self.source_dir, self.decrypted_dir))
+
+    def test_skip_unencrypted_file(self):
+        """test skipping unencrypted file"""
+        result = self.exec(
+            self.base_params
+            + [
+                "--encrypt",
+                self.source_dir,
+                self.encrypted_dir,
+            ],
+        )
+        log.debug(result.stdout)
+        log.debug(result.stderr)
+        self.assertEqual(result.returncode, 0)
+        # create a plain unecrypted file in encrypted_dir
+        with open(os.path.join(self.encrypted_dir, "newfile"), "wb") as tfd:
+            tfd.write(b"test")
+        # decrypt the encrypted dir
+        result = self.exec(
+            self.base_params
+            + [
+                "--decrypt",
+                self.encrypted_dir,
+                self.decrypted_dir,
+            ],
+        )
+        # source and decrypted dirs should be the same
+        # the new file should have been ignored
+        self.assertTrue(self.dirs_equal(self.source_dir, self.decrypted_dir))
+
+    def test_slash_no_problem(self):
+        """test that trailing slash does not cause problems"""
+        result = self.exec(
+            self.base_params
+            + [
+                "--encrypt",
+                self.source_dir + "/",
+                self.encrypted_dir + "/",
+            ],
+        )
+        log.debug(result.stdout)
+        log.debug(result.stderr)
+        self.assertEqual(result.returncode, 0)
+        # decrypt
+        result = self.exec(
+            self.base_params
+            + [
+                "--decrypt",
+                self.encrypted_dir + "/",
+                self.decrypted_dir + "/",
+            ],
+        )
+        log.debug(result.stdout)
+        log.debug(result.stderr)
+        self.assertEqual(result.returncode, 0)
+        # make sure files are the same after decryption (names + structure only)
+        self.assertTrue(self.dirs_equal(self.source_dir, self.decrypted_dir))
+
+    def test_listing(self):
+        """test listing of source and encrypted directory"""
+        result = self.exec(
+            self.base_params
+            + [
+                "--encrypt",
+                self.source_dir,
+                self.encrypted_dir,
+            ],
+        )
+        log.debug(result.stdout)
+        log.debug(result.stderr)
+        self.assertEqual(result.returncode, 0)
+        # list
+        result = self.exec(
+            self.base_params
+            + [
+                "--list",
+                self.source_dir,
+            ],
+        )
+        log.debug(result.stdout)
+        log.debug(result.stderr)
+        self.assertEqual(result.returncode, 0)
+        # make sure listings are equal
+        source_files = sorted(glob.glob(self.source_dir + "/**", recursive=True))[1:]
+        listed_files = sorted(result.stdout.decode("utf-8").splitlines())
+        self.assertEqual(source_files, listed_files)
+        # list encrypted
+        result = self.exec(
+            self.base_params
+            + [
+                "--list",
+                self.encrypted_dir,
+            ],
+        )
+        log.debug(result.stdout)
+        log.debug(result.stderr)
+        self.assertEqual(result.returncode, 0)
+        # make sure listings are equal
+        listed_enc_files = [
+            # replace paths in output to allow 1-1 matching
+            _.replace(self.encrypted_dir, self.source_dir)
+            for _ in sorted(result.stdout.decode("utf-8").splitlines())
+        ]
+        self.assertEqual(source_files, listed_enc_files)
+
+        # verbose listing should show encrypted files
+        result = self.exec(
+            self.base_params
+            + [
+                "--verbose",
+                "--list",
+                self.encrypted_dir,
+            ],
+        )
+        log.debug(result.stdout)
+        log.debug(result.stderr)
+        self.assertEqual(result.returncode, 0)
+        # for each line of encrypted input it should be split by '->'
+        # and left part should be plaintext file and right part encrypted version
+        for line in result.stdout.decode("utf-8").splitlines():
+            parts = line.split("->")
+            self.assertEqual(len(parts), 2)
+            self.assertFalse(parts[0].strip() == parts[1].strip())
+
+        # verbose listing of source dir should show plaintext files
+        # on both sides
+        result = self.exec(
+            self.base_params
+            + [
+                "--verbose",
+                "--list",
+                self.source_dir,
+            ],
+        )
+        log.debug(result.stdout)
+        log.debug(result.stderr)
+        self.assertEqual(result.returncode, 0)
+        # for each line of encrypted input it should be split by '->'
+        # and left line should be plaintext file and right part equal to left
+        for line in result.stdout.decode("utf-8").splitlines():
+            parts = line.strip().split("->")
+            self.assertEqual(len(parts), 2)
+            self.assertTrue(parts[0].strip() == parts[1].strip())
+
+    def test_nonexistent_dirs(self):
+        """Test encrypt, decrypt and list on non-existent directories"""
+        non_existent_dir = os.path.join(self.root, "non-existent")
+        # non-existent source dir should fail
+        result = self.exec(
+            self.base_params
+            + [
+                "--encrypt",
+                non_existent_dir,
+                self.encrypted_dir,
+            ],
+        )
+        self.assertNotEqual(result.returncode, 0)
+        # non-existent target dir should succeed
+        result = self.exec(
+            self.base_params
+            + [
+                "--encrypt",
+                self.source_dir,
+                non_existent_dir,
+            ],
+        )
+        self.assertTrue(os.path.exists(non_existent_dir))
+        self.assertEqual(result.returncode, 0)
+        shutil.rmtree(non_existent_dir)
+
+        # decryption
+        result = self.exec(
+            self.base_params
+            + [
+                "--decrypt",
+                non_existent_dir,
+                self.decrypted_dir,
+            ],
+        )
+        self.assertNotEqual(result.returncode, 0)
+        # non-existent target should be created
+        result = self.exec(
+            self.base_params
+            + [
+                "--decrypt",
+                self.encrypted_dir,
+                non_existent_dir,
+            ],
+        )
+        self.assertTrue(os.path.exists(non_existent_dir))
+        self.assertEqual(result.returncode, 0)
+        shutil.rmtree(non_existent_dir)
+
+        # listing
+        result = self.exec(
+            self.base_params
+            + [
+                "--list",
+                non_existent_dir,
+            ],
+        )
+        self.assertNotEqual(result.returncode, 0)
 
 
 if __name__ == "__main__":

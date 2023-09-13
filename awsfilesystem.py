@@ -1,12 +1,15 @@
 """ AWS Filesystem module """
 import os
+import io
+from io import BytesIO
 from tempfile import mkstemp
-from typing import Generator, IO, AnyStr
+from typing import Iterator
+from types import TracebackType
 from contextlib import contextmanager
 import logging
 from pathlib import Path
 import copy
-import s3fs
+import s3fs  # type: ignore # no mypy checks here as it's not typed
 from filesystems import Filesystem
 
 
@@ -19,7 +22,7 @@ AWS_MAX_OBJECT_NAME_LENGTH = 1024  # all paths must be less than this length
 # pylint: disable=logging-fstring-interpolation
 
 
-class S3WriteProxy:
+class S3WriteProxy(io.BytesIO):
     """
     Proxy class for S3 writes.
     Caches all writes to a local file and only writes to S3 when the file is closed.
@@ -28,22 +31,26 @@ class S3WriteProxy:
     Otherwise partial uploads would be created as new objects without the user knowing.
     """
 
-    def __init__(self, s3fs_instance, filepath, temp_path="/tmp"):
+    def __init__(
+        self, s3fs_instance: s3fs.S3FileSystem, filepath: str, temp_path: str = "/tmp"
+    ):
         self.s3fs = s3fs_instance
         self.s3path = filepath
-        self.local_file = None
+        self.local_file: str = ""
         self.temp_path = temp_path
-        self.fd = None  # pylint: disable=invalid-name
+        # pylint: disable=invalid-name
+        self.fd: io.BytesIO | io.BufferedWriter | None = None
         self._init_local_storage()
 
-    def _init_local_storage(self):
+    def _init_local_storage(self) -> None:
         """initializes local storage"""
         if self.fd is None:
             _, self.local_file = mkstemp(prefix="s3writeproxy-", dir=self.temp_path)
             os.close(_)
+            # pylint: disable=consider-using-with
             self.fd = open(self.local_file, "wb")
 
-    def close(self, abort=False):
+    def close(self, abort: bool = False) -> None:
         """
         closes the local temporary file and uploads it to S3.
         Keep in mind that if you interrupt this process S3 will contain
@@ -63,10 +70,27 @@ class S3WriteProxy:
         os.remove(self.local_file)
         self.fd = None
 
-    def __enter__(self):
-        return self.fd
+    def read(self, size: int | None = -1) -> bytes:
+        """reads data from local file"""
+        if size is None:
+            size = -1
+        assert self.fd is not None
+        return self.fd.read(size)
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    def write(self, data: bytes) -> int:  # type: ignore # not going to write Buffer
+        """writes data to local file"""
+        assert self.fd is not None
+        return self.fd.write(data)
+
+    def __enter__(self) -> "S3WriteProxy":
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         if exc_type is not None:
             log.debug(
                 f"Exception occured, aborting upload to S3. {exc_type} {exc_value} {str(traceback)}"
@@ -74,7 +98,6 @@ class S3WriteProxy:
             self.close(abort=True)
         else:
             self.close()
-        return True
 
 
 class AWSFilesystem(Filesystem):
@@ -83,7 +106,7 @@ class AWSFilesystem(Filesystem):
     https://s3fs.readthedocs.io/en/latest/api.html
     """
 
-    def __init__(self, bucket, profile):
+    def __init__(self, bucket: str, profile: str):
         self.bucket = bucket
         self.s3fs = s3fs.S3FileSystem(profile=profile)
         self._cwd = "/"
@@ -107,11 +130,10 @@ class AWSFilesystem(Filesystem):
         """
         if path == ".":
             return self.cwd
-        path = Path(path)
-        if path.is_absolute():
-            return str(path)
-        else:
-            return os.path.join(self.cwd, path)
+        path_obj = Path(path)
+        if path_obj.is_absolute():
+            return str(path_obj)
+        return os.path.join(self.cwd, path_obj)
 
     def abs_s3_path(self, path: str) -> str:
         """
@@ -172,7 +194,7 @@ class AWSFilesystem(Filesystem):
         self.cwd = directory  # setter will make this absolute
 
     @contextmanager
-    def cwd_cm(self, directory: str) -> None:
+    def cwd_cm(self, directory: str) -> Iterator[None]:
         """
         Context manager:
         changes to a directory that is over MAX_PATH_LENGTH
@@ -183,7 +205,7 @@ class AWSFilesystem(Filesystem):
         yield
         self.chdir(old_cwd)
 
-    def walk(self, path: str) -> Generator[str, list, list]:
+    def walk(self, path: str) -> Iterator[tuple[str, list[str], list[str]]]:
         """
         Generator that returns only regular files and dirs and
         ignores symlinks and other special files
@@ -213,7 +235,9 @@ class AWSFilesystem(Filesystem):
             yield path, dirs, files
             queue.extend([os.path.join(path, d) for d in dirs])
 
-    def open(self, filepath: str, mode: str = "r", encoding=None) -> IO[AnyStr]:
+    def open(
+        self, filepath: str, mode: str = "r", encoding: str | None = None
+    ) -> BytesIO:
         """opens a file and returns a file descriptor"""
         if len(self.abs_path(filepath)) - 1 > AWS_MAX_OBJECT_NAME_LENGTH:
             raise OSError(
@@ -225,19 +249,18 @@ class AWSFilesystem(Filesystem):
         if "r" in mode and "w" in mode:
             raise ValueError("Cannot open file in read/write mode")
         if "r" in mode:
-            return self.s3fs.open(
+            return self.s3fs.open(  # type: ignore[no-any-return]
                 self.abs_s3_path(filepath), mode=mode, encoding=encoding
             )
-        elif "w" in mode:
+        if "w" in mode:
             proxy = S3WriteProxy(self.s3fs, self.abs_s3_path(filepath))
             return proxy
-        else:
-            raise ValueError("Mode must contain r or w.")
+        raise ValueError("Mode must contain r or w.")
 
     def get_size(self, filepath: str) -> int:
         """returns the size of a file"""
         info = self.s3fs.info(self.abs_s3_path(filepath))
-        return info["size"]
+        return int(info["size"])
 
     def exists(self, filepath: str) -> bool:
         """returns True if filepath exists"""
