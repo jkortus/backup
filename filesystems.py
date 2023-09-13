@@ -430,6 +430,7 @@ class RealFilesystem(Filesystem):
 
     def is_dir(self, path: str) -> bool:
         """returns True if path is a directory"""
+        path = str(Path(path))  # avoid most shenanigans :)
         parent = os.path.dirname(path)
         name = os.path.basename(path)
         if not parent:
@@ -439,6 +440,7 @@ class RealFilesystem(Filesystem):
 
     def mkdir(self, dirpath: str) -> None:
         """creates diretories"""
+        dirpath = str(Path(dirpath))  # avoid most shenanigans :)
         name = os.path.basename(dirpath)
         parent = os.path.dirname(dirpath)
         if parent:
@@ -470,6 +472,7 @@ class RealFilesystem(Filesystem):
 
     def chdir(self, directory: str) -> None:
         """changes the current working directory"""
+        directory = str(Path(directory))  # avoid most shenanigans :)
         if len(directory) > MAX_PATH_LENGTH:
             segments = self.get_safe_path_segments(directory)
             for segment in segments:
@@ -494,6 +497,7 @@ class RealFilesystem(Filesystem):
             # if directory is empty as a result of path parsing, do nothing
             yield
             return
+        directory = str(Path(directory))  # avoid most shenanigans :)
         try:
             old_cwd = self.getcwd()
         except FileNotFoundError:
@@ -515,6 +519,7 @@ class RealFilesystem(Filesystem):
         Generator that returns only regular files and dirs and
         ignores symlinks and other special files
         """
+        path = str(Path(path))  # avoid most shenanigans :)
         if not self.is_dir(path):
             raise IOError(f"Directory {path} does not exist or is not a directory")
 
@@ -547,6 +552,7 @@ class RealFilesystem(Filesystem):
         self, filepath: str, mode: str = "r", encoding: str | None = None
     ) -> BytesIO:
         """opens a file and returns a file descriptor"""
+        filepath = str(Path(filepath))  # avoid most shenanigans :)
         directory = os.path.dirname(filepath)
         fname = os.path.basename(filepath)
         with self.cwd_cm(directory):
@@ -554,12 +560,14 @@ class RealFilesystem(Filesystem):
 
     def get_size(self, filepath: str) -> int:
         """returns the size of a file"""
+        filepath = str(Path(filepath))  # avoid most shenanigans :)
         fname = os.path.basename(filepath)
         with self.cwd_cm(os.path.dirname(filepath)):
             return os.path.getsize(fname)
 
     def exists(self, filepath: str) -> bool:
         """returns True if filepath exists"""
+        filepath = str(Path(filepath))  # avoid most shenanigans :)
         parent = os.path.dirname(filepath)
         if not parent:
             parent = self.getcwd()
@@ -568,6 +576,7 @@ class RealFilesystem(Filesystem):
 
     def unlink(self, filepath: str) -> None:
         """removes a file"""
+        filepath = str(Path(filepath))  # avoid most shenanigans :)
         parent = os.path.dirname(filepath)
         if not parent:
             parent = self.getcwd()
@@ -576,6 +585,7 @@ class RealFilesystem(Filesystem):
 
     def rmdir(self, dirpath: str) -> None:
         """removes a directory"""
+        dirpath = str(Path(dirpath))  # avoid most shenanigans :)
         parent = os.path.dirname(dirpath)
         if not parent:
             parent = self.getcwd()
@@ -584,6 +594,7 @@ class RealFilesystem(Filesystem):
 
     def rmtree(self, dirpath: str) -> None:
         """removes a directory tree recursively"""
+        dirpath = str(Path(dirpath))  # avoid most shenanigans :)
         parent = os.path.dirname(dirpath)
         if not parent:
             parent = self.getcwd()
