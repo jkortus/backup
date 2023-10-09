@@ -1021,6 +1021,9 @@ def get_password() -> str:
     if _PASSWORD is not None:
         return _PASSWORD
     password = getpass.getpass(prompt="Password: ")
+    password_confirm = getpass.getpass(prompt="Confirm password: ")
+    if password != password_confirm:
+        raise ValueError("Passwords do not match!")
     _PASSWORD = password
     return password
 
