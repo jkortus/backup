@@ -292,6 +292,7 @@ class FSDirectory:
         cls, path: str, filesystem: Filesystem, recursive: bool = True
     ) -> "FSDirectory":
         """creates a FSdirectory tree from the file system"""
+        log.info(f"Scanning {filesystem.__class__.__name__}:{path}")
         if not filesystem.is_dir(path):
             raise IOError(f"Directory {path} does not exist or is not a directory")
         with filesystem.cwd_cm(path):
