@@ -195,7 +195,7 @@ def main() -> None:
                 args.decrypt[1], args.profile
             )
         _setup_logging(args)  # again due to possible s3 imports
-        init_password(args.password)
+        init_password(args.password, confirm=False)
         try:
             if not source_filesystem.exists(source_dir):
                 log.error(f"Source directory {source_dir} does not exist")

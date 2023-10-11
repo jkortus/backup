@@ -1015,27 +1015,28 @@ def decrypt_file(  # pylint: disable=too-many-arguments
     report_event("decrypt_file", source_file, decrypted_fname)
 
 
-def get_password() -> str:
+def get_password(confirm: bool = True) -> str:
     """asks for password interactively"""
     global _PASSWORD  # pylint: disable=global-statement
     if _PASSWORD is not None:
         return _PASSWORD
     password = getpass.getpass(prompt="Password: ")
-    password_confirm = getpass.getpass(prompt="Confirm password: ")
-    if password != password_confirm:
-        raise ValueError("Passwords do not match!")
+    if confirm:
+        password_confirm = getpass.getpass(prompt="Confirm password: ")
+        if password != password_confirm:
+            raise ValueError("Passwords do not match!")
     _PASSWORD = password
     return password
 
 
-def init_password(password: str | None) -> None:
+def init_password(password: str | None, confirm: bool = True) -> None:
     """
     helper function for command line utilities
     If password is given it is used, otherwise it's asked for interactively
     """
     global _PASSWORD  # pylint: disable=global-statement
     if password is None:
-        password = get_password()
+        password = get_password(confirm=confirm)
     _PASSWORD = password
 
 
