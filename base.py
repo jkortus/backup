@@ -1051,12 +1051,19 @@ def get_key(salt: bytes | None = None) -> EncryptionKey:
     if salt is not None:
         if _KEYSTORE.get(salt):
             return _KEYSTORE[salt]
-        log.debug(f"Generating decryption key for salt {salt!r}")
+        log.info(f"Generating decryption key for salt {salt!r}")
         key = EncryptionKey(password=get_password(), salt=salt)
         _KEYSTORE[salt] = key
+        # also set is as a new encryption key, since we usually will
+        # use this to add more encrypted files and we do not support
+        # multiple encryption keys (yet). This allows skipping unnecessary
+        # extra call to generate the same key for encryption.
+        _ENCRYPTION_KEY = key
         return key
     if _ENCRYPTION_KEY is None:
+        log.info("Generating new encryption key...")
         _ENCRYPTION_KEY = EncryptionKey(password=get_password())
+        _KEYSTORE[_ENCRYPTION_KEY.salt] = _ENCRYPTION_KEY
     return _ENCRYPTION_KEY
 
 
